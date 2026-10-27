@@ -210,7 +210,8 @@
         syncBandMax: 4100,
         fftSize:     4096,
         smoothing:   0.2,
-        noiseFloor:  -55,     // dB — signal must exceed this
+        noiseFloor:  -55,     // dB — fallback when floor tracker is cold
+        snrDb:       12,      // dB above adaptive floor = signal present
         longSyncMs:  800,     // sync run that counts as a delimiter
         sweepTones:  16,
     });
@@ -244,6 +245,26 @@
     let slotT0 = 0;
     let slots = [];
     let sweepOffset = 0;
+
+    // Adaptive noise floor: 10th percentile of recent broadband level.
+    // Absolute floors can't span USB mics (-24 dB signals) and phone
+    // mics in pockets (-90 dB signals); relative detection can.
+    // Learning rule: LISTENING frames always feed it; mid-frame only
+    // quiet frames do — tones must never raise their own threshold.
+    let floorDb = C.noiseFloor;
+    const floorHist = [];
+    function learnFloor(levelDb, listening, threshDb) {
+        if (!listening && levelDb >= threshDb) return;
+        floorHist.push(levelDb);
+        if (floorHist.length > 300) floorHist.shift(); // ~5 s at 60 fps
+        if (floorHist.length < 30) return; // cold: keep absolute
+        const s = [...floorHist].sort((a, b) => a - b);
+        const p10 = s[Math.floor(s.length * 0.1)];
+        if (p10 === undefined) return;
+        // Rise slowly (loud onsets must not deafen us), fall instantly.
+        const target = Math.max(-90, Math.min(-30, p10));
+        floorDb = target < floorDb ? target : Math.min(target, floorDb + 0.1);
+    }
 
     // Decoded data
     let frameCount = 0;
@@ -364,6 +385,8 @@
         lastSyncTs = -1;
         slots = [];
         sweepOffset = 0;
+        floorDb = C.noiseFloor;
+        floorHist.length = 0;
         frameCount = 0;
         symMs = Number(symSel.value) || 200;
         resultEl.className = '';
@@ -427,8 +450,11 @@
             dataPeakFreq = (dataPeakBin + delta) * binHz;
         }
 
-        // Classify frame
-        const loud = Math.max(syncPeak, dataPeak) > C.noiseFloor;
+        // Classify frame against the adaptive floor
+        const rawMax = Math.max(syncPeak, dataPeak);
+        learnFloor(rawMax, state === S.LISTENING, floorDb + C.snrDb);
+        const threshDb = floorDb + C.snrDb;
+        const loud = Math.max(syncPeak, dataPeak) > threshDb;
         const isSync = loud && syncPeak >= dataPeak;
 
         // Sync-run tracking: gaps < 120 ms don't break the run (marginal
@@ -441,22 +467,22 @@
         const syncRunMs = syncRunStart >= 0 ? ts - syncRunStart : 0;
         const syncNow = isSync || (syncRunStart >= 0 && ts - lastSyncTs < SYNC_GAP_MS);
 
-        processFrame(ts, isSync, syncNow, syncRunMs, dataPeakFreq, dataPeak);
+        processFrame(ts, isSync, syncNow, syncRunMs, dataPeakFreq, dataPeak, threshDb);
 
         // Indicators
-        if (!isSync && dataPeak > C.noiseFloor) {
+        if (!isSync && dataPeak > threshDb) {
             freqLabel.textContent = Math.round(dataPeakFreq) + ' Hz';
             freqLabel.classList.add('active');
             const nib = freqToNibble(dataPeakFreq, sweepOffset);
             nibLabel.textContent = nib === null ? '?' : '0x' + nib.toString(16).toUpperCase();
             nibLabel.classList.add('active');
-            confLabel.textContent = Math.round(dataPeak - C.noiseFloor) + ' dB';
+            confLabel.textContent = Math.round(dataPeak - floorDb) + ' dB';
             confLabel.classList.add('active');
         } else if (isSync) {
             freqLabel.textContent = 'SYNC';
             freqLabel.classList.add('active');
             nibLabel.textContent = '\u2014';
-            confLabel.textContent = Math.round(syncPeak - C.noiseFloor) + ' dB';
+            confLabel.textContent = Math.round(syncPeak - floorDb) + ' dB';
         }
 
         drawWaterfall(binHz);
@@ -465,7 +491,8 @@
         tickCount++;
         if (tickCount % 300 === 0 && state !== S.IDLE) {
             postFrame({ alive: true, st: state, symMs, mic: micState(),
-                syncDb: +syncPeak.toFixed(1), dataDb: +dataPeak.toFixed(1) });
+                syncDb: +syncPeak.toFixed(1), dataDb: +dataPeak.toFixed(1),
+                floorDb: +floorDb.toFixed(1) });
         }
 
         requestAnimationFrame(tick);
@@ -474,7 +501,7 @@
     // --- Decode state machine (timestamp slot-counting; repeat-nibble safe) ---
     // isSync = this frame's raw classification (edge detection);
     // syncNow = flicker-tolerant sync presence (run tracking).
-    function processFrame(ts, isSync, syncNow, syncRunMs, peakFreq, peakDb) {
+    function processFrame(ts, isSync, syncNow, syncRunMs, peakFreq, peakDb, threshDb) {
         switch (state) {
             case S.LISTENING:
                 // Preamble ends: long sync run just ended -> sweep starts now
@@ -503,14 +530,14 @@
                     if (ts - slotT0 < (C.sweepTones + 1.5) * symMs) break;
                     return failFrame('expected SEP after sweep');
                 }
-                if (peakDb > C.noiseFloor) pushSlot(idx, peakFreq, peakDb);
+                if (peakDb > threshDb) pushSlot(idx, peakFreq, peakDb);
                 break;
             }
 
             case S.SEPDATA:
                 // SEP ends: first data frame starts the data section
                 if (ts - slotT0 > 6000) return failFrame('SEP timeout');
-                if (!isSync && peakDb > C.noiseFloor) {
+                if (!isSync && peakDb > threshDb) {
                     state = S.DATA;
                     slotT0 = ts;
                     slots = [];
@@ -526,7 +553,7 @@
                 if (syncNow && syncRunMs >= C.longSyncMs) {
                     return finishData(ts - syncRunMs);
                 }
-                if (!isSync && peakDb > C.noiseFloor) {
+                if (!isSync && peakDb > threshDb) {
                     // Late-phase sampling: ring decays while the driven tone
                     // holds, so [50%,90%] of each slot discriminates best.
                     const phase = ((ts - slotT0) % symMs) / symMs;
@@ -785,20 +812,23 @@
         // twin1 ground-truth payload (same as unit tests)
         const tones = tonesForFrame([2, 65, 170, 107, 44, 179, 10, 0, 2, 15, 0], symMs);
 
+        // Sample-accurate scheduling on the audio clock: sleep()-based
+        // pacing drifts ~7 ms/tone, stretching 28 tones to 29 slots.
+        let t = ctx.currentTime + 0.05;
         for (const [freq, ms] of tones) {
             const osc = ctx.createOscillator();
             osc.frequency.value = freq;
             osc.type = 'sine';
             osc.connect(gain);
-            osc.start();
-            await sleep(ms);
-            osc.stop();
-            osc.disconnect();
+            osc.start(t);
+            osc.stop(t + ms / 1000);
+            osc.onended = () => osc.disconnect();
+            t += ms / 1000;
         }
 
+        // Wait out the frame, then let the END sync register before teardown
+        await sleep((t - ctx.currentTime) * 1000 + 1200);
         gain.disconnect();
-        // Let the END sync register before tearing down
-        await sleep(1200);
         selfBtn.disabled = false;
         selfBtn.textContent = 'Self-test';
 

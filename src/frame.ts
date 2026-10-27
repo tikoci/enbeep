@@ -139,7 +139,10 @@ export function decodeRecording(
   const freqs: number[] = [];
   for (let i = 0; i < nSec; i++) {
     const slot = seg.subarray(Math.floor(i * secLen), Math.floor((i + 1) * secLen));
-    freqs.push(tonePeak(slot, sampleRate, DATA_LO, SYNC_FREQ + 100));
+    // Narrow data band (a v1 SOF/EOF leftover admitted 4000 Hz SEP tails)
+    // + late window: ring decays while the driven tone holds, so the
+    // slot's second half discriminates loud→quiet transitions best.
+    freqs.push(tonePeak(slot, sampleRate, DATA_LO, DATA_HI, 0.5, 0.1));
   }
   if (freqs.length % 2 !== 0) {
     return fail(base, `odd data tone count ${freqs.length}`);

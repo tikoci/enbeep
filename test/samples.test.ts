@@ -57,3 +57,51 @@ test("bigdude-v2-gap-a transient is rejected, not decoded", async () => {
   expect(res.ok).toBe(false);
   expect(res.problems.join(" ")).toMatch(/sweep mismatch/);
 });
+
+test("bigdude-v2-200micB-c decodes exact under late windows", async () => {
+  // Was a Fletcher reject under center sampling (tone-22 smear); the late
+  // window [50%,90%] lets the 3400 Hz ring decay before sampling 2000 Hz.
+  const res = await decodeSample("bigdude-v2-200micB-c.wav", 200);
+  expect(res.problems).toEqual([]);
+  expect(res.ok).toBe(true);
+  expect(res.payload!.slice(0, 10)).toEqual(MAC_IP);
+  expect(res.sumOk).toBe(true);
+});
+
+// iPhone-trial captures (mic B control receiver, late-window decoder).
+for (const name of ["bigdude-v2-200micB-d.wav", "bigdude-v2-200micB-e.wav"]) {
+  test(`${name} decodes exact`, async () => {
+    const res = await decodeSample(name, 200);
+    expect(res.problems).toEqual([]);
+    expect(res.ok).toBe(true);
+    expect(res.payload!.slice(0, 10)).toEqual(MAC_IP);
+    expect(res.sumOk).toBe(true);
+  });
+}
+
+test("bigdude-v2-300micB-b decodes exact at 300 ms", async () => {
+  const res = await decodeSample("bigdude-v2-300micB-b.wav", 300);
+  expect(res.problems).toEqual([]);
+  expect(res.ok).toBe(true);
+  expect(res.payload!.slice(0, 10)).toEqual(MAC_IP);
+  expect(res.sumOk).toBe(true);
+});
+
+test("bigdude-v2-200micB-r3 short tone 0 breaks framing, rejected", async () => {
+  // Box-side glitch: tone 0 plays ~120 ms, so no window reads LEN cleanly.
+  const res = await decodeSample("bigdude-v2-200micB-r3.wav", 200);
+  expect(res.ok).toBe(false);
+  expect(res.problems.join(" ")).toMatch(/byte count/);
+});
+
+for (const name of [
+  "bigdude-v2-200micB-r4.wav", // smear in Fletcher bytes (tone 26)
+  "bigdude-v2-200micB-r5.wav", // checksum-byte smear
+  "bigdude-v2-200micB-r8.wav", // deepest tone-22 smear (late-proof)
+]) {
+  test(`${name} is correctly rejected`, async () => {
+    const res = await decodeSample(name, 200);
+    expect(res.ok).toBe(false);
+    expect(res.payload!.slice(0, 10)).toEqual(MAC_IP); // address always survives
+  });
+}

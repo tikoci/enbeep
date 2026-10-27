@@ -136,13 +136,20 @@ export function findSyncs(
   return regions;
 }
 
-/** Center-50% peak of one tone slot (avoids edge smear between tones). */
+/**
+ * Windowed peak of one tone slot. The driven tone is constant but the
+ * previous tone's ring decays, so LATE windows beat centered ones:
+ * trimHead/trimTail are fractions discarded from each side.
+ */
 export function tonePeak(
   slot: Float64Array,
   sampleRate: number,
   lo = DATA_LO,
   hi = DATA_HI,
+  trimHead = 0.25,
+  trimTail = 0.25,
 ): number {
-  const q = Math.floor(slot.length / 4);
-  return peakFreq(slot.subarray(q, slot.length - q), sampleRate, lo, hi);
+  const a = Math.floor(slot.length * trimHead);
+  const b = slot.length - Math.floor(slot.length * trimTail);
+  return peakFreq(slot.subarray(a, Math.max(a + 16, b)), sampleRate, lo, hi);
 }

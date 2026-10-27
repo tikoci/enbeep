@@ -231,11 +231,14 @@
     let analyser = null;
     let micStream = null;
     let freqData = null;
+    let wakeLock = null;
     let symMs = 200;             // active symbol length for this frame
 
-    // Sync-run tracking (timestamp based)
+    // Sync-run tracking (timestamp based, dropout-tolerant)
     let syncRunStart = -1;       // ts when current sync run began, -1 = not in sync
+    let lastSyncTs = -1;         // ts of most recent sync-positive frame
     let blindUntil = 0;          // ignore transitions until ts (post-frame END tail)
+    const SYNC_GAP_MS = 120;     // gaps shorter than this don't break a run
 
     // Slot accumulation: array of {freqs: [], dbs: []} per slot index
     let slotT0 = 0;
@@ -326,6 +329,11 @@
             };
             if (micSel.value) constraints.deviceId = { exact: micSel.value };
             micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+            const track = micStream.getAudioTracks()[0];
+            if (track) {
+                track.onended = () => micDead('Mic track ended — tap Stop, then Start');
+                track.onmute = () => micDead('Mic muted by OS — tap Stop, then Start');
+            }
 
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             await audioCtx.resume();
@@ -337,6 +345,9 @@
             src.connect(analyser);
 
             freqData = new Float32Array(analyser.frequencyBinCount);
+            try {
+                if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen');
+            } catch (e) { /* unsupported — user must keep the screen awake */ }
             resetDecode();
             setupCanvas();
             updateUI();
@@ -350,6 +361,7 @@
     function resetDecode() {
         state = S.LISTENING;
         syncRunStart = -1;
+        lastSyncTs = -1;
         slots = [];
         sweepOffset = 0;
         frameCount = 0;
@@ -360,7 +372,19 @@
         logEl.innerHTML = '';
     }
 
+    function micDead(msg) {
+        setStatus(msg, 'error');
+        log('err', '  ' + msg);
+        postFrame({ ok: false, error: msg, symMs });
+    }
+
+    function micState() {
+        const t = micStream ? micStream.getAudioTracks()[0] : null;
+        return t ? (t.readyState + (t.muted ? '/muted' : '/live')) : 'none';
+    }
+
     function stopListening() {
+        if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
         if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
         if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
         analyser = null;
@@ -369,6 +393,7 @@
     }
 
     // --- Main analysis loop ---
+    let tickCount = 0;
     function tick(ts) {
         if (state === S.IDLE || !analyser) return;
         if (ts === undefined) ts = performance.now();
@@ -406,14 +431,17 @@
         const loud = Math.max(syncPeak, dataPeak) > C.noiseFloor;
         const isSync = loud && syncPeak >= dataPeak;
 
-        // Sync-run tracking
+        // Sync-run tracking: gaps < 120 ms don't break the run (marginal
+        // SNR flickers isSync frame to frame; any-miss reset never locks).
         if (isSync) {
             if (syncRunStart < 0) syncRunStart = ts;
+            lastSyncTs = ts;
         }
+        if (syncRunStart >= 0 && ts - lastSyncTs >= SYNC_GAP_MS) syncRunStart = -1;
         const syncRunMs = syncRunStart >= 0 ? ts - syncRunStart : 0;
+        const syncNow = isSync || (syncRunStart >= 0 && ts - lastSyncTs < SYNC_GAP_MS);
 
-        processFrame(ts, isSync, syncRunMs, dataPeakFreq, dataPeak);
-        if (!isSync) syncRunStart = -1;
+        processFrame(ts, isSync, syncNow, syncRunMs, dataPeakFreq, dataPeak);
 
         // Indicators
         if (!isSync && dataPeak > C.noiseFloor) {
@@ -432,11 +460,21 @@
         }
 
         drawWaterfall(binHz);
+
+        // Heartbeat: proves the loop is alive + reports live levels (5 s).
+        tickCount++;
+        if (tickCount % 300 === 0 && state !== S.IDLE) {
+            postFrame({ alive: true, st: state, symMs, mic: micState(),
+                syncDb: +syncPeak.toFixed(1), dataDb: +dataPeak.toFixed(1) });
+        }
+
         requestAnimationFrame(tick);
     }
 
     // --- Decode state machine (timestamp slot-counting; repeat-nibble safe) ---
-    function processFrame(ts, isSync, syncRunMs, peakFreq, peakDb) {
+    // isSync = this frame's raw classification (edge detection);
+    // syncNow = flicker-tolerant sync presence (run tracking).
+    function processFrame(ts, isSync, syncNow, syncRunMs, peakFreq, peakDb) {
         switch (state) {
             case S.LISTENING:
                 // Preamble ends: long sync run just ended -> sweep starts now
@@ -445,6 +483,8 @@
                     state = S.SWEEP;
                     slotT0 = ts;
                     slots = [];
+                    syncRunStart = -1; // preamble run is over; don't bleed
+                    lastSyncTs = -1;
                     symMs = Number(symSel.value) || 200;
                     setStatus('Preamble locked — calibrating…', 'sync');
                     log('sync', '▶ preamble locked, sweep @ ' + symMs + ' ms');
@@ -457,8 +497,10 @@
                 }
                 const idx = Math.floor((ts - slotT0) / symMs);
                 if (idx >= C.sweepTones) {
-                    // Sweep window over: must now be inside SEP
-                    if (isSync) return finishSweep(ts);
+                    // Sweep window over: SEP must appear within a grace window
+                    // (tone-15 ring + SEP attack smear the boundary tick).
+                    if (syncNow) return finishSweep(ts);
+                    if (ts - slotT0 < (C.sweepTones + 1.5) * symMs) break;
                     return failFrame('expected SEP after sweep');
                 }
                 if (peakDb > C.noiseFloor) pushSlot(idx, peakFreq, peakDb);
@@ -472,6 +514,8 @@
                     state = S.DATA;
                     slotT0 = ts;
                     slots = [];
+                    syncRunStart = -1; // SEP run is over; END needs a fresh run
+                    lastSyncTs = -1;
                     setStatus('Decoding…', 'decoding');
                 }
                 break;
@@ -479,11 +523,16 @@
             case S.DATA: {
                 if (ts - slotT0 > 30000) return failFrame('data timeout');
                 // END: long sync run -> section ends where the run began
-                if (isSync && syncRunMs >= C.longSyncMs) {
+                if (syncNow && syncRunMs >= C.longSyncMs) {
                     return finishData(ts - syncRunMs);
                 }
                 if (!isSync && peakDb > C.noiseFloor) {
-                    pushSlot(Math.floor((ts - slotT0) / symMs), peakFreq, peakDb);
+                    // Late-phase sampling: ring decays while the driven tone
+                    // holds, so [50%,90%] of each slot discriminates best.
+                    const phase = ((ts - slotT0) % symMs) / symMs;
+                    if (phase >= 0.5 && phase <= 0.9) {
+                        pushSlot(Math.floor((ts - slotT0) / symMs), peakFreq, peakDb);
+                    }
                 }
                 break;
             }
@@ -551,13 +600,16 @@
             showResult(true, payload, maxDf, '');
             log('ok', '  frame #' + frameCount + ': ' + payload.length + ' bytes, fletcher ✓');
             setStatus('Frame verified ✓ — listening…', 'done');
+            postFrame({ ok: true, payload, offsetHz: sweepOffset, maxDfHz: maxDf, symMs });
         } else {
             showResult(false, payload, maxDf, 'fletcher mismatch');
             log('err', '  frame #' + frameCount + ': CHECKSUM FAIL');
             setStatus('Checksum failed — listening…', 'error');
+            postFrame({ ok: false, error: 'fletcher mismatch', payload, symMs });
         }
         state = S.LISTENING;
         syncRunStart = -1;
+        lastSyncTs = -1;
         slots = [];
         blindUntil = performance.now() + 1500; // swallow the END tail
     }
@@ -565,9 +617,22 @@
     function failFrame(why) {
         log('err', '  frame dropped: ' + why);
         setStatus('Listening — ' + why, 'error');
+        postFrame({ ok: false, error: why, symMs });
         state = S.LISTENING;
         syncRunStart = -1;
+        lastSyncTs = -1;
         slots = [];
+    }
+
+    // Best-effort result upload for instrumented trials (see serve.ts).
+    function postFrame(row) {
+        try {
+            fetch('/api/frame', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...row, ua: navigator.userAgent }),
+            }).catch(() => {});
+        } catch (e) { /* page works standalone without the endpoint */ }
     }
 
     function f1hz(v) {
@@ -800,6 +865,15 @@
         _selftest: { startSelfTest, stopListening } };
 
     // Init
+    document.addEventListener('visibilitychange', async () => {
+        // Wake locks die with visibility; re-acquire when back (mic may
+        // still need a Stop/Start — micDead will say so).
+        if (!document.hidden && state !== S.IDLE && !wakeLock) {
+            try {
+                if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen');
+            } catch (e) {}
+        }
+    });
     window.addEventListener('load', () => { setupCanvas(); refreshMicList(); });
     window.addEventListener('resize', () => { if (state !== S.IDLE) setupCanvas(); });
     symSel.addEventListener('change', () => { symMs = Number(symSel.value) || 200; });

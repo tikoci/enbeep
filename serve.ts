@@ -10,7 +10,7 @@
  * On iPhone, open https://<your-lan-ip>:3456 and accept the cert warning.
  */
 
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 
 const useTls = process.argv.includes("--tls");
 const port = Number(process.env.PORT) || 3456;
@@ -61,6 +61,33 @@ Bun.serve({
 		"/live.html": new Response(Bun.file("live.html"), {
 			headers: { "Content-Type": "text/html" },
 		}),
+		"/api/frame": {
+			POST: async (req) => {
+				const raw = await req.text();
+				if (raw.length > 4096) {
+					return Response.json({ ok: false, error: "body too large" }, { status: 413 });
+				}
+				let body: unknown;
+				try {
+					body = JSON.parse(raw);
+				} catch {
+					return Response.json({ ok: false, error: "invalid JSON" }, { status: 400 });
+				}
+				if (typeof body !== "object" || body === null || (!("ok" in body) && !("alive" in body))) {
+					return Response.json({ ok: false, error: "need {ok|alive, ...}" }, { status: 400 });
+				}
+				const row = JSON.stringify({
+					ts: new Date().toISOString(),
+					...(body as Record<string, unknown>),
+				});
+				try {
+					appendFileSync("frames.jsonl", row + "\n");
+				} catch (err) {
+					return Response.json({ ok: false, error: String(err) }, { status: 500 });
+				}
+				return Response.json({ ok: true });
+			},
+		},
 	},
 	fetch() {
 		return new Response("Not found", { status: 404 });

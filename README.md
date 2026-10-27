@@ -5,8 +5,8 @@ The demo payload is an **announce frame** — the router's MAC, IPv4, and a
 state byte — verified on screen with a checksum. The beep is the handshake,
 never the channel.
 
-Status: working on air (RB1100AHx4 → Apogee MiC, 7/10 frames byte-exact,
-2 correct rejects, 1 false-accept on the retired v1 format).
+Status: working on air (RB1100AHx4 → Apogee MiC, 11/18 frames byte-exact,
+6 principled rejects, 1 false-accept on the retired v1 format).
 
 ## Quick start
 
@@ -80,3 +80,6 @@ for that old calibration format (`make test-py`). Neither is on the v2 path.
 - 1 m off-axis costs ~14 dB SNR (39 → 25 dB); still decodes.
 - Failure mode is always ring-down smear onto a wrong-but-confident
   center — only the checksum catches it (Fletcher-16: 1/65536 class).
+  Sampling slots late ([50%,90%]) beats centered windows because ring
+  decays while the driven tone holds; the systematic killer is the
+  3400→2000 Hz transition (cpu and checksum high nibbles when <16).

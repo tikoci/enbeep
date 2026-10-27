@@ -1,0 +1,52 @@
+# dependencies (bun install)
+node_modules
+
+# python analysis env (project-local, re-created via `python3 -m venv .venv`)
+.venv
+
+# self-signed live-server certs
+cert.pem
+key.pem
+
+# output
+out
+dist
+*.tgz
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+_.log
+*.log
+report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+__pycache__/
+*.pyc
+
+# IntelliJ based IDEs
+.idea
+
+# VS Code workspace (user-local)
+.vscode
+
+# Finder (MacOS) folder config
+.DS_Store
+
+# Windows thumbnails + editor backups
+Thumbs.db
+*~
+*.swp

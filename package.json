@@ -1,0 +1,27 @@
+{
+  "name": "enbeep",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "lint": "bunx biome check .",
+    "format": "bunx biome format .",
+    "typecheck": "bunx tsc --noEmit",
+    "convert": "bun run src/convert-audio.ts",
+    "decode": "bun run src/decode-samples.ts",
+    "analyze": "python3 decode/analyze_recording.py",
+    "test:py": "python3 -m unittest discover -s decode -p 'test_*.py' -q",
+    "test": "bun test",
+    "frame:decode": "bun run src/decode.ts",
+    "serve": "bun run serve.ts",
+    "serve:tls": "bun run serve.ts --tls"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "biome": "latest",
+    "typescript": "^5"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

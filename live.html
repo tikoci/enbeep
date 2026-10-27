@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>enbeep — Live Acoustic Decoder</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            min-height: 100dvh;
+            padding: 1rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        header { margin-bottom: 1.25rem; }
+        h1 { font-size: 1.4rem; letter-spacing: -0.02em; }
+        .subtitle { color: #666; font-size: 0.85rem; margin-top: 0.15rem; }
+
+        .controls { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+        button {
+            flex: 1;
+            padding: 0.8rem 1rem;
+            font-size: 1rem;
+            border: 2px solid #333;
+            background: transparent;
+            color: #999;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        button:active { transform: scale(0.98); }
+        #startBtn { border-color: #4a9eff; color: #4a9eff; flex: 2; }
+        #startBtn:active { background: #4a9eff15; }
+        #startBtn.listening { border-color: #ff4a4a; color: #ff4a4a; }
+        #startBtn.listening:active { background: #ff4a4a15; }
+        #selfBtn { border-color: #555; color: #888; }
+        #selfBtn:active { background: #ffffff08; }
+        #selfBtn:disabled { opacity: 0.3; cursor: default; }
+
+        .pickers { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+        .pickers label { flex: 1; font-size: 0.75rem; color: #666; }
+        .pickers select {
+            display: block;
+            width: 100%;
+            margin-top: 0.2rem;
+            padding: 0.5rem;
+            font-size: 0.9rem;
+            background: #111;
+            color: #e0e0e0;
+            border: 1px solid #333;
+            border-radius: 6px;
+        }
+        .selfnote { font-size: 0.75rem; color: #555; margin: -0.5rem 0 1rem 0; }
+
+        #status {
+            text-align: center;
+            padding: 0.4rem;
+            font-size: 0.85rem;
+            color: #555;
+            margin-bottom: 0.75rem;
+        }
+        #status.sync { color: #ffaa00; }
+        #status.decoding { color: #00cc66; }
+        #status.done { color: #4a9eff; }
+        #status.error { color: #ff4a4a; }
+
+        .waterfall-wrap {
+            position: relative;
+            margin-bottom: 0.5rem;
+            border-radius: 6px;
+            overflow: hidden;
+            background: #111;
+        }
+        #waterfall { display: block; width: 100%; height: 200px; }
+        .freq-axis {
+            position: absolute;
+            right: 6px;
+            font-family: monospace;
+            font-size: 9px;
+            color: rgba(255,255,255,0.35);
+            pointer-events: none;
+            text-shadow: 0 0 3px #000;
+        }
+
+        .indicator {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #444;
+            margin-bottom: 0.75rem;
+        }
+        .indicator .active { color: #e0e0e0; }
+
+        #result {
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 0.9rem 1rem;
+            margin-bottom: 0.75rem;
+            font-family: monospace;
+            display: none;
+        }
+        #result.show { display: block; }
+        #result.ok { border-color: #00cc66; }
+        #result.bad { border-color: #ff4a4a; }
+        #result .rline { font-size: 1.05rem; margin: 0.15rem 0; }
+        #result .rmeta { font-size: 0.8rem; color: #888; margin-top: 0.3rem; }
+        #result .tick { font-size: 1.4rem; font-weight: bold; }
+        #result.ok .tick { color: #00cc66; }
+        #result.bad .tick { color: #ff4a4a; }
+
+        #decoded-output {
+            font-family: monospace;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            background: #111;
+            border-radius: 6px;
+            padding: 0.75rem;
+            min-height: 3rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin-bottom: 0.75rem;
+        }
+        #decoded-output .cursor { color: #4a9eff; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+
+        #nibble-log {
+            font-family: monospace;
+            font-size: 0.75rem;
+            line-height: 1.45;
+            color: #666;
+            max-height: 180px;
+            overflow-y: auto;
+            margin-bottom: 1rem;
+        }
+        #nibble-log .log-sync { color: #ffaa00; }
+        #nibble-log .log-byte { color: #4a9eff; }
+        #nibble-log .log-err { color: #ff4a4a; }
+        #nibble-log .log-ok { color: #00cc66; }
+
+        footer { font-size: 0.75rem; color: #444; text-align: center; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>enbeep</h1>
+        <div class="subtitle">v2 live frame decoder — MAC/IP announce</div>
+    </header>
+
+    <div class="controls">
+        <button id="startBtn">Start Listening</button>
+        <button id="selfBtn">Self-test</button>
+    </div>
+    <div class="selfnote">Self-test synthesizes a frame in-page (no mic) — a decoder check only.</div>
+    <div class="pickers">
+        <label>Microphone
+            <select id="micSel"><option value="">Default input</option></select>
+        </label>
+        <label>Symbol
+            <select id="symSel">
+                <option value="100">100 ms</option>
+                <option value="200" selected>200 ms</option>
+                <option value="300">300 ms</option>
+            </select>
+        </label>
+    </div>
+
+    <div id="status">Ready</div>
+
+    <div class="waterfall-wrap" id="waterfallWrap">
+        <canvas id="waterfall"></canvas>
+    </div>
+    <div class="indicator">
+        <span id="freqLabel">&mdash;</span>
+        <span id="nibbleLabel">&mdash;</span>
+        <span id="confLabel">&mdash;</span>
+    </div>
+
+    <div id="result"></div>
+    <div id="decoded-output"><span class="cursor">&#9612;</span></div>
+    <div id="nibble-log"></div>
+
+    <footer>
+        Real-time MFSK-16 frame decoding via Web Audio AnalyserNode
+    </footer>
+
+<script>
+'use strict';
+/* enbeep live v2 decoder.
+ * Frame: PRE(2s sync + 16-tone sweep) · SEP(1s) · LEN+payload+FLETCHER16 · END(1s)
+ * Slot-counting (timestamp-based): repeat-nibble safe. Sweep calibrates offset.
+ * Mirrors src/frame.ts. Syncs are the only delimiters (no SOF/EOF tones).
+ */
+
+    // --- Configuration (matches RouterOS encoder) ---
+    const C = Object.freeze({
+        baseFreq:    2000,
+        step:        100,
+        numTones:    16,
+        syncFreq:    4000,
+        tolerance:   50,      // Hz — after sweep offset calibration
+        dataBandMin: 1800,
+        dataBandMax: 3700,
+        syncBandMin: 3900,
+        syncBandMax: 4100,
+        fftSize:     4096,
+        smoothing:   0.2,
+        noiseFloor:  -55,     // dB — signal must exceed this
+        longSyncMs:  800,     // sync run that counts as a delimiter
+        sweepTones:  16,
+    });
+
+    const DATA_FREQS = Array.from({ length: C.numTones }, (_, i) => C.baseFreq + i * C.step);
+
+    // --- State ---
+    const S = Object.freeze({
+        IDLE:      'idle',
+        LISTENING: 'listening',  // waiting for preamble end
+        SWEEP:     'sweep',       // collecting 16 calibration slots
+        SEPDATA:   'sepdata',     // in SEP, waiting for data section
+        DATA:      'data',        // collecting data slots until END sync
+    });
+
+    let state = S.IDLE;
+    let audioCtx = null;
+    let analyser = null;
+    let micStream = null;
+    let freqData = null;
+    let symMs = 200;             // active symbol length for this frame
+
+    // Sync-run tracking (timestamp based)
+    let syncRunStart = -1;       // ts when current sync run began, -1 = not in sync
+    let blindUntil = 0;          // ignore transitions until ts (post-frame END tail)
+
+    // Slot accumulation: array of {freqs: [], dbs: []} per slot index
+    let slotT0 = 0;
+    let slots = [];
+    let sweepOffset = 0;
+
+    // Decoded data
+    let frameCount = 0;
+
+    // --- DOM ---
+    const startBtn  = document.getElementById('startBtn');
+    const selfBtn   = document.getElementById('selfBtn');
+    const micSel    = document.getElementById('micSel');
+    const symSel    = document.getElementById('symSel');
+    const statusEl  = document.getElementById('status');
+    const canvas    = document.getElementById('waterfall');
+    const wfWrap    = document.getElementById('waterfallWrap');
+    const freqLabel = document.getElementById('freqLabel');
+    const nibLabel  = document.getElementById('nibbleLabel');
+    const confLabel = document.getElementById('confLabel');
+    const resultEl  = document.getElementById('result');
+    const outputEl  = document.getElementById('decoded-output');
+    const logEl     = document.getElementById('nibble-log');
+    const gfx       = canvas.getContext('2d');
+
+    // --- Canvas setup ---
+    let canvasW, canvasH;
+    const FREQ_LO = C.dataBandMin;
+    const FREQ_HI = C.syncBandMax;
+
+    function setupCanvas() {
+        const rect = wfWrap.getBoundingClientRect();
+        canvasW = Math.floor(rect.width);
+        canvasH = 200;
+        canvas.width = canvasW;
+        canvas.height = canvasH;
+        gfx.fillStyle = '#111';
+        gfx.fillRect(0, 0, canvasW, canvasH);
+        placeFreqLabels();
+    }
+
+    function placeFreqLabels() {
+        wfWrap.querySelectorAll('.freq-axis').forEach(el => el.remove());
+        const labels = [
+            ...DATA_FREQS.filter((_, i) => i % 4 === 0),
+            C.syncFreq,
+        ];
+        for (const freq of labels) {
+            const pct = 1 - (freq - FREQ_LO) / (FREQ_HI - FREQ_LO);
+            if (pct < 0.02 || pct > 0.98) continue;
+            const el = document.createElement('span');
+            el.className = 'freq-axis';
+            el.style.top = (pct * canvasH) + 'px';
+            el.textContent = freq >= C.syncFreq ? 'SYNC' : freq + '';
+            wfWrap.appendChild(el);
+        }
+    }
+
+    // --- Mic picker ---
+    async function refreshMicList() {
+        try {
+            const devs = await navigator.mediaDevices.enumerateDevices();
+            const mics = devs.filter(d => d.kind === 'audioinput');
+            const cur = micSel.value;
+            micSel.innerHTML = '<option value="">Default input</option>';
+            mics.forEach((m, i) => {
+                const o = document.createElement('option');
+                o.value = m.deviceId;
+                o.textContent = m.label || ('Microphone ' + (i + 1));
+                micSel.appendChild(o);
+            });
+            if (cur) micSel.value = cur;
+        } catch (e) { /* labels need permission; picker stays default-only */ }
+    }
+
+    // --- Audio ---
+    startBtn.addEventListener('click', toggleListening);
+    selfBtn.addEventListener('click', playSelfTest);
+
+    async function toggleListening() {
+        if (state !== S.IDLE) { stopListening(); return; }
+
+        try {
+            const constraints = {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+            };
+            if (micSel.value) constraints.deviceId = { exact: micSel.value };
+            micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            await audioCtx.resume();
+
+            const src = audioCtx.createMediaStreamSource(micStream);
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = C.fftSize;
+            analyser.smoothingTimeConstant = C.smoothing;
+            src.connect(analyser);
+
+            freqData = new Float32Array(analyser.frequencyBinCount);
+            resetDecode();
+            setupCanvas();
+            updateUI();
+            refreshMicList(); // labels now available
+            requestAnimationFrame(tick);
+        } catch (err) {
+            setStatus('Mic error: ' + err.message, 'error');
+        }
+    }
+
+    function resetDecode() {
+        state = S.LISTENING;
+        syncRunStart = -1;
+        slots = [];
+        sweepOffset = 0;
+        frameCount = 0;
+        symMs = Number(symSel.value) || 200;
+        resultEl.className = '';
+        resultEl.innerHTML = '';
+        outputEl.innerHTML = '<span class="cursor">&#9612;</span>';
+        logEl.innerHTML = '';
+    }
+
+    function stopListening() {
+        if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+        if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+        analyser = null;
+        state = S.IDLE;
+        updateUI();
+    }
+
+    // --- Main analysis loop ---
+    function tick(ts) {
+        if (state === S.IDLE || !analyser) return;
+        if (ts === undefined) ts = performance.now();
+
+        analyser.getFloatFrequencyData(freqData);
+
+        const sr = audioCtx.sampleRate;
+        const binHz = sr / C.fftSize;
+
+        // Peak in sync band
+        const sLo = Math.floor(C.syncBandMin / binHz);
+        const sHi = Math.min(Math.ceil(C.syncBandMax / binHz), freqData.length - 1);
+        let syncPeak = -Infinity;
+        for (let i = sLo; i <= sHi; i++) {
+            if (freqData[i] > syncPeak) syncPeak = freqData[i];
+        }
+
+        // Peak in data band (parabolic interpolation for sub-bin precision)
+        const dLo = Math.max(1, Math.floor(C.dataBandMin / binHz));
+        const dHi = Math.min(Math.ceil(C.dataBandMax / binHz), freqData.length - 2);
+        let dataPeak = -Infinity;
+        let dataPeakBin = dLo;
+        for (let i = dLo; i <= dHi; i++) {
+            if (freqData[i] > dataPeak) { dataPeak = freqData[i]; dataPeakBin = i; }
+        }
+        let dataPeakFreq = dataPeakBin * binHz;
+        const a = freqData[dataPeakBin - 1], b = freqData[dataPeakBin], c = freqData[dataPeakBin + 1];
+        const denom = a - 2 * b + c;
+        if (denom !== 0) {
+            const delta = Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / denom));
+            dataPeakFreq = (dataPeakBin + delta) * binHz;
+        }
+
+        // Classify frame
+        const loud = Math.max(syncPeak, dataPeak) > C.noiseFloor;
+        const isSync = loud && syncPeak >= dataPeak;
+
+        // Sync-run tracking
+        if (isSync) {
+            if (syncRunStart < 0) syncRunStart = ts;
+        }
+        const syncRunMs = syncRunStart >= 0 ? ts - syncRunStart : 0;
+
+        processFrame(ts, isSync, syncRunMs, dataPeakFreq, dataPeak);
+        if (!isSync) syncRunStart = -1;
+
+        // Indicators
+        if (!isSync && dataPeak > C.noiseFloor) {
+            freqLabel.textContent = Math.round(dataPeakFreq) + ' Hz';
+            freqLabel.classList.add('active');
+            const nib = freqToNibble(dataPeakFreq, sweepOffset);
+            nibLabel.textContent = nib === null ? '?' : '0x' + nib.toString(16).toUpperCase();
+            nibLabel.classList.add('active');
+            confLabel.textContent = Math.round(dataPeak - C.noiseFloor) + ' dB';
+            confLabel.classList.add('active');
+        } else if (isSync) {
+            freqLabel.textContent = 'SYNC';
+            freqLabel.classList.add('active');
+            nibLabel.textContent = '\u2014';
+            confLabel.textContent = Math.round(syncPeak - C.noiseFloor) + ' dB';
+        }
+
+        drawWaterfall(binHz);
+        requestAnimationFrame(tick);
+    }
+
+    // --- Decode state machine (timestamp slot-counting; repeat-nibble safe) ---
+    function processFrame(ts, isSync, syncRunMs, peakFreq, peakDb) {
+        switch (state) {
+            case S.LISTENING:
+                // Preamble ends: long sync run just ended -> sweep starts now
+                if (ts < blindUntil) break;
+                if (!isSync && syncRunStart >= 0 && syncRunMs >= C.longSyncMs) {
+                    state = S.SWEEP;
+                    slotT0 = ts;
+                    slots = [];
+                    symMs = Number(symSel.value) || 200;
+                    setStatus('Preamble locked — calibrating…', 'sync');
+                    log('sync', '▶ preamble locked, sweep @ ' + symMs + ' ms');
+                }
+                break;
+
+            case S.SWEEP: {
+                if (ts - slotT0 > C.sweepTones * symMs + 1500) {
+                    return failFrame('sweep timeout');
+                }
+                const idx = Math.floor((ts - slotT0) / symMs);
+                if (idx >= C.sweepTones) {
+                    // Sweep window over: must now be inside SEP
+                    if (isSync) return finishSweep(ts);
+                    return failFrame('expected SEP after sweep');
+                }
+                if (peakDb > C.noiseFloor) pushSlot(idx, peakFreq, peakDb);
+                break;
+            }
+
+            case S.SEPDATA:
+                // SEP ends: first data frame starts the data section
+                if (ts - slotT0 > 6000) return failFrame('SEP timeout');
+                if (!isSync && peakDb > C.noiseFloor) {
+                    state = S.DATA;
+                    slotT0 = ts;
+                    slots = [];
+                    setStatus('Decoding…', 'decoding');
+                }
+                break;
+
+            case S.DATA: {
+                if (ts - slotT0 > 30000) return failFrame('data timeout');
+                // END: long sync run -> section ends where the run began
+                if (isSync && syncRunMs >= C.longSyncMs) {
+                    return finishData(ts - syncRunMs);
+                }
+                if (!isSync && peakDb > C.noiseFloor) {
+                    pushSlot(Math.floor((ts - slotT0) / symMs), peakFreq, peakDb);
+                }
+                break;
+            }
+        }
+    }
+
+    function pushSlot(idx, freq, db) {
+        while (slots.length <= idx) slots.push({ freqs: [], dbs: [] });
+        slots[idx].freqs.push(freq);
+        slots[idx].dbs.push(db);
+    }
+
+    function slotMedian(slot) {
+        const s = [...slot.freqs].sort((x, y) => x - y);
+        return s.length % 2 ? s[(s.length - 1) / 2]
+            : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+    }
+
+    function finishSweep(ts) {
+        if (slots.length < C.sweepTones) return failFrame('short sweep');
+        const offs = [];
+        for (let n = 0; n < C.sweepTones; n++) {
+            if (!slots[n] || !slots[n].freqs.length) return failFrame('sweep gap @' + n);
+            const f = slotMedian(slots[n]);
+            const nib = Math.round((f - C.baseFreq) / C.step);
+            if (nib !== n) {
+                return failFrame('sweep mismatch @' + n + ' (got ' + Math.round(f) + ' Hz)');
+            }
+            offs.push(f - (C.baseFreq + n * C.step));
+        }
+        offs.sort((x, y) => x - y);
+        sweepOffset = offs.length % 2 ? offs[(offs.length - 1) / 2]
+            : (offs[offs.length / 2 - 1] + offs[offs.length / 2]) / 2;
+        state = S.SEPDATA;
+        slotT0 = ts;
+        log('ok', '  sweep 0–15 ✓ offset ' + f1hz(sweepOffset) + ' Hz');
+    }
+
+    function finishData(dataEndTs) {
+        const nSlots = Math.round((dataEndTs - slotT0) / symMs);
+        if (nSlots < 6 || nSlots % 2 !== 0) {
+            return failFrame('bad data length (' + nSlots + ' tones)');
+        }
+        const nibbles = [];
+        const dfs = [];
+        for (let i = 0; i < nSlots; i++) {
+            const s = slots[i];
+            if (!s || !s.freqs.length) return failFrame('data gap @tone ' + i);
+            const f = slotMedian(s);
+            const nib = Math.round((f - sweepOffset - C.baseFreq) / C.step);
+            if (nib < 0 || nib > 15) return failFrame('tone outside band @' + i);
+            nibbles.push(nib);
+            dfs.push(f - sweepOffset - (C.baseFreq + nib * C.step));
+        }
+        const maxDf = Math.max(...dfs.map(Math.abs));
+        const bytes = [];
+        for (let i = 0; i < nibbles.length; i += 2) bytes.push(nibbles[i] * 16 + nibbles[i + 1]);
+        const len = bytes[0];
+        if (bytes.length !== len + 3) return failFrame('len ' + len + ' vs ' + bytes.length + ' bytes');
+        const payload = bytes.slice(1, 1 + len);
+        const got = bytes.slice(1 + len);
+        const [e1, e2] = fletcher16([len, ...payload]);
+        frameCount++;
+        if (got[0] === e1 && got[1] === e2) {
+            showResult(true, payload, maxDf, '');
+            log('ok', '  frame #' + frameCount + ': ' + payload.length + ' bytes, fletcher ✓');
+            setStatus('Frame verified ✓ — listening…', 'done');
+        } else {
+            showResult(false, payload, maxDf, 'fletcher mismatch');
+            log('err', '  frame #' + frameCount + ': CHECKSUM FAIL');
+            setStatus('Checksum failed — listening…', 'error');
+        }
+        state = S.LISTENING;
+        syncRunStart = -1;
+        slots = [];
+        blindUntil = performance.now() + 1500; // swallow the END tail
+    }
+
+    function failFrame(why) {
+        log('err', '  frame dropped: ' + why);
+        setStatus('Listening — ' + why, 'error');
+        state = S.LISTENING;
+        syncRunStart = -1;
+        slots = [];
+    }
+
+    function f1hz(v) {
+        return (Math.abs(v) < 0.05 ? 0 : v).toFixed(1);
+    }
+
+    function fletcher16(bytes) {
+        let s1 = 0, s2 = 0;
+        for (const b of bytes) {
+            s1 = (s1 + b) % 255;
+            s2 = (s2 + s1) % 255;
+        }
+        return [s1, s2];
+    }
+
+    function freqToNibble(freq, offset) {
+        const n = Math.round((freq - offset - C.baseFreq) / C.step);
+        if (n < 0 || n >= C.numTones) return null;
+        return Math.abs(freq - offset - DATA_FREQS[n]) <= C.tolerance ? n : null;
+    }
+
+    // --- Result card ---
+    function showResult(ok, payload, maxDf, err) {
+        let main;
+        if (payload.length === 11) {
+            const mac = payload.slice(0, 6).map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(':');
+            const ip = payload.slice(6, 10).join('.');
+            main = '<div class="rline">' + escapeHtml(mac) + '</div>' +
+                   '<div class="rline">' + escapeHtml(ip) + ' &nbsp;cpu ' + payload[10] + '</div>';
+        } else {
+            const hex = payload.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+            const ascii = payload.map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '·').join('');
+            main = '<div class="rline">' + escapeHtml(hex) + '</div>' +
+                   '<div class="rline">' + escapeHtml(ascii) + '</div>';
+        }
+        resultEl.className = 'show ' + (ok ? 'ok' : 'bad');
+        resultEl.innerHTML =
+            '<span class="tick">' + (ok ? '✓' : '✗') + '</span> ' + main +
+            '<div class="rmeta">' + symMs + ' ms/sym · offset ' + f1hz(sweepOffset) +
+            ' Hz · max|df| ' + maxDf.toFixed(0) + ' Hz' + (err ? ' · ' + escapeHtml(err) : '') + '</div>';
+        outputEl.textContent = payload.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+    }
+
+    // --- Waterfall spectrogram ---
+    const SCROLL = 2;
+
+    function drawWaterfall(binHz) {
+        const img = gfx.getImageData(SCROLL, 0, canvasW - SCROLL, canvasH);
+        gfx.putImageData(img, 0, 0);
+
+        const col = gfx.createImageData(SCROLL, canvasH);
+        const range = FREQ_HI - FREQ_LO;
+
+        for (let y = 0; y < canvasH; y++) {
+            const freq = FREQ_HI - (y / canvasH) * range;
+            const bin = Math.round(freq / binHz);
+            const dB = (bin >= 0 && bin < freqData.length) ? freqData[bin] : -100;
+
+            const [r, g, b] = heatmap(dB);
+
+            for (let x = 0; x < SCROLL; x++) {
+                const idx = (y * SCROLL + x) * 4;
+                col.data[idx]     = r;
+                col.data[idx + 1] = g;
+                col.data[idx + 2] = b;
+                col.data[idx + 3] = 255;
+            }
+        }
+        gfx.putImageData(col, canvasW - SCROLL, 0);
+
+        gfx.save();
+        gfx.globalAlpha = 0.08;
+        gfx.strokeStyle = '#fff';
+        gfx.lineWidth = 1;
+        for (const f of DATA_FREQS) {
+            const y = Math.round(canvasH * (1 - (f - FREQ_LO) / range));
+            gfx.beginPath(); gfx.moveTo(0, y + 0.5); gfx.lineTo(canvasW, y + 0.5); gfx.stroke();
+        }
+        gfx.globalAlpha = 0.12;
+        gfx.strokeStyle = '#f80';
+        const sy = Math.round(canvasH * (1 - (C.syncFreq - FREQ_LO) / range));
+        gfx.beginPath(); gfx.moveTo(0, sy + 0.5); gfx.lineTo(canvasW, sy + 0.5); gfx.stroke();
+        gfx.restore();
+    }
+
+    function heatmap(dB) {
+        const t = Math.max(0, Math.min(1, (dB - (-80)) / 50));
+        let r, g, b;
+        if (t < 0.2) {
+            const s = t / 0.2;
+            r = Math.floor(s * 30);
+            g = Math.floor(s * 10);
+            b = Math.floor(s * 60);
+        } else if (t < 0.4) {
+            const s = (t - 0.2) / 0.2;
+            r = 30 - Math.floor(s * 20);
+            g = 10 + Math.floor(s * 100);
+            b = 60 + Math.floor(s * 60);
+        } else if (t < 0.6) {
+            const s = (t - 0.4) / 0.2;
+            r = 10 + Math.floor(s * 40);
+            g = 110 + Math.floor(s * 100);
+            b = 120 - Math.floor(s * 80);
+        } else if (t < 0.8) {
+            const s = (t - 0.6) / 0.2;
+            r = 50 + Math.floor(s * 200);
+            g = 210 + Math.floor(s * 40);
+            b = 40 - Math.floor(s * 30);
+        } else {
+            const s = (t - 0.8) / 0.2;
+            r = 250 + Math.floor(s * 5);
+            g = 250;
+            b = 10 + Math.floor(s * 240);
+        }
+        return [r, g, b];
+    }
+
+    // --- Self-test: synthesize a v2 frame straight into the analyser ---
+    // Honest self-test: exercises the decoder with no acoustic round-trip.
+    // Never film this as a hardware decode.
+    function tonesForFrame(payload, sym) {
+        const tones = [];
+        tones.push([C.syncFreq, 2000]);
+        for (let n = 0; n < 16; n++) tones.push([C.baseFreq + n * C.step, sym]);
+        tones.push([C.syncFreq, 1000]);
+        const len = payload.length;
+        const [f1, f2] = fletcher16([len, ...payload]);
+        for (const b of [len, ...payload, f1, f2]) {
+            tones.push([C.baseFreq + Math.floor(b / 16) * C.step, sym]);
+            tones.push([C.baseFreq + (b % 16) * C.step, sym]);
+        }
+        tones.push([C.syncFreq, 1000]);
+        return tones;
+    }
+
+    async function playSelfTest() {
+        if (selfBtn.disabled) return;
+        selfBtn.disabled = true;
+        selfBtn.textContent = 'Playing…';
+
+        const startedForTest = (state === S.IDLE);
+        if (startedForTest) startSelfTest();
+
+        const ctx = audioCtx;
+        const gain = ctx.createGain();
+        gain.gain.value = 0.3;
+        gain.connect(ctx.destination);
+        gain.connect(analyser);
+
+        // twin1 ground-truth payload (same as unit tests)
+        const tones = tonesForFrame([2, 65, 170, 107, 44, 179, 10, 0, 2, 15, 0], symMs);
+
+        for (const [freq, ms] of tones) {
+            const osc = ctx.createOscillator();
+            osc.frequency.value = freq;
+            osc.type = 'sine';
+            osc.connect(gain);
+            osc.start();
+            await sleep(ms);
+            osc.stop();
+            osc.disconnect();
+        }
+
+        gain.disconnect();
+        // Let the END sync register before tearing down
+        await sleep(1200);
+        selfBtn.disabled = false;
+        selfBtn.textContent = 'Self-test';
+
+        if (startedForTest) {
+            stopListening();
+        }
+    }
+
+    function startSelfTest() {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = C.fftSize;
+        analyser.smoothingTimeConstant = C.smoothing;
+        freqData = new Float32Array(analyser.frequencyBinCount);
+
+        resetDecode();
+        setupCanvas();
+        updateUI();
+        requestAnimationFrame(tick);
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // --- UI helpers ---
+    function setStatus(msg, cls) {
+        statusEl.textContent = msg;
+        statusEl.className = cls || '';
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function updateUI() {
+        if (state === S.IDLE) {
+            startBtn.textContent = 'Start Listening';
+            startBtn.className = '';
+            setStatus('Ready');
+            freqLabel.textContent = '—';
+            nibLabel.textContent = '—';
+            confLabel.textContent = '—';
+            freqLabel.classList.remove('active');
+            nibLabel.classList.remove('active');
+            confLabel.classList.remove('active');
+        } else {
+            startBtn.textContent = 'Stop';
+            startBtn.className = 'listening';
+            if (state === S.LISTENING) {
+                setStatus('Listening — waiting for sync tone…');
+            }
+        }
+    }
+
+    function log(type, msg) {
+        const div = document.createElement('div');
+        div.className = 'log-' + type;
+        div.textContent = msg;
+        logEl.appendChild(div);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Small test surface (used by the harness smoke test only)
+    window.__enbeep = { fletcher16, tonesForFrame, freqToNibble, C,
+        _selftest: { startSelfTest, stopListening } };
+
+    // Init
+    window.addEventListener('load', () => { setupCanvas(); refreshMicList(); });
+    window.addEventListener('resize', () => { if (state !== S.IDLE) setupCanvas(); });
+    symSel.addEventListener('change', () => { symMs = Number(symSel.value) || 200; });
+</script>
+</body>
+</html>

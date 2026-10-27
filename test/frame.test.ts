@@ -76,3 +76,91 @@ test("real bigdude probe sweep decodes 0..15", async () => {
   expect(res.sweepNibbles).toEqual([...Array(16).keys()]);
   expect(Math.abs(res.offsetHz)).toBeLessThan(5);
 });
+
+// Slow-piezo masking (pierce RB953 signature): a loud sync rings one slot
+// into the next tone. Simulated by extending the sync and dropping slot 0.
+test("masked slot 0 (sweep 1..15 + 27 data tones) still decodes exact", () => {
+  const tones = tonesForPayload(TWIN1_PAYLOAD, 200);
+  const pre = tones[0];
+  if (!pre) throw new Error("tone plan too short");
+  pre.ms += 200; // PRE overruns into sweep tone 0
+  tones.splice(1, 1); // drop sweep nibble 0 -> 15 survivors
+  const dataStart = 1 + 15 + 1; // pre + sweep + sep (post-drop indices)
+  const sep = tones[dataStart - 1];
+  if (!sep) throw new Error("tone plan too short");
+  sep.ms += 200; // SEP overruns into data slot 0 (LEN hi-nibble)
+  tones.splice(dataStart, 1); // drop data tone 0 -> 27 survivors
+  const res = decodeRecording(renderTones(tones, SR), SR, 200);
+  expect(res.problems).toEqual([]);
+  expect(res.ok).toBe(true);
+  expect(res.sweepDropout).toBe(true);
+  expect(res.dataErasure).toBe(true);
+  expect(res.sweepNibbles).toEqual([-1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+  expect(res.len).toBe(11);
+  expect(res.payload).toEqual(TWIN1_PAYLOAD);
+  expect(res.sumOk).toBe(true);
+});
+
+test("dropout sweep with a wrong survivor still rejects", () => {
+  const tones = tonesForPayload(TWIN1_PAYLOAD, 200);
+  const pre = tones[0];
+  if (!pre) throw new Error("tone plan too short");
+  pre.ms += 200;
+  tones.splice(1, 1);
+  const corrupt = tones[2]; // survivor nibble 2 -> reads 3
+  if (!corrupt) throw new Error("tone plan too short");
+  corrupt.freq += 100;
+  const res = decodeRecording(renderTones(tones, SR), SR, 200);
+  expect(res.ok).toBe(false);
+  expect(res.problems.join(" ")).toMatch(/sweep mismatch/);
+});
+
+test("erased data with unrecoverable LEN hi-nibble rejects", () => {
+  const tones = tonesForPayload(TWIN1_PAYLOAD, 200);
+  const dataStart = 1 + 16 + 1;
+  const sep = tones[dataStart - 1];
+  if (!sep) throw new Error("tone plan too short");
+  sep.ms += 200;
+  tones.splice(dataStart, 1); // 27 survivors; S0 = LEN-lo = 11
+  const s0 = tones[dataStart]; // corrupt S0: hi = (11-6)/16 not integer
+  if (!s0) throw new Error("tone plan too short");
+  s0.freq = 2600;
+  const res = decodeRecording(renderTones(tones, SR), SR, 200);
+  expect(res.ok).toBe(false);
+  expect(res.problems.join(" ")).toMatch(/unrecoverable/);
+});
+
+// Rounding straddle (pierce k1 signature): slot 0 masked but the window
+// still measures full, so the grid sits one slot late reading true tones
+// 1..27 and LEN reads (B,0)=0xB0 with df ~ 0. Structural repair rescues it.
+test("straddled grid (confident wrong LEN) repairs via fallback", () => {
+  const tones = tonesForPayload(TWIN1_PAYLOAD, 200);
+  const dataStart = 1 + 16 + 1;
+  const sep = tones[dataStart - 1];
+  if (!sep) throw new Error("tone plan too short");
+  sep.ms += 200; // overrun absorbs tone 0's time...
+  tones.splice(dataStart, 1); // ...tone 0 gone, grid one late...
+  tones.splice(dataStart + 27, 0, { freq: 2000, ms: 200 }); // ...junk 28th slot
+  const res = decodeRecording(renderTones(tones, SR), SR, 200);
+  expect(res.ok).toBe(true);
+  expect(res.dataErasure).toBe(true);
+  expect(res.len).toBe(11);
+  expect(res.payload).toEqual(TWIN1_PAYLOAD);
+  expect(res.sumOk).toBe(true);
+});
+
+test("straddled grid with corrupt interior still rejects byte count", () => {
+  const tones = tonesForPayload(TWIN1_PAYLOAD, 200);
+  const dataStart = 1 + 16 + 1;
+  const sep = tones[dataStart - 1];
+  if (!sep) throw new Error("tone plan too short");
+  sep.ms += 200;
+  tones.splice(dataStart, 1);
+  tones.splice(dataStart + 27, 0, { freq: 2000, ms: 200 });
+  const corrupt = tones[dataStart + 10];
+  if (!corrupt) throw new Error("tone plan too short");
+  corrupt.freq += 200; // interior damage: repair must fail closed
+  const res = decodeRecording(renderTones(tones, SR), SR, 200);
+  expect(res.ok).toBe(false);
+  expect(res.problems.join(" ")).toMatch(/byte count/);
+});

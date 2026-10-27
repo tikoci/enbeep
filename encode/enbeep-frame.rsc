@@ -1,9 +1,9 @@
-# enbeep-frame.rsc — general MFSK-16 frame encoder, v2 (RouterOS 7).
+# enbeep-frame.rsc - general MFSK-16 frame encoder, v2 (RouterOS 7).
 #
 # Frame (data tones at symbol length $sym; 2000+100*n Hz, high nibble first):
 #   PRE  2s @ 4000 Hz + 16-tone sweep 2000..3500 (per-tx calibration)
 #   SEP  1s @ 4000 Hz
-#   DATA LEN, payload bytes, FLETCHER16 (2 tones/byte, no SOF/EOF — the 1s
+#   DATA LEN, payload bytes, FLETCHER16 (2 tones/byte, no SOF/EOF - the 1s
 #        syncs are the delimiters; 1-tone 4000 Hz markers would merge into them)
 #   END  1s @ 4000 Hz
 # v2 replaces the v1 byte-sum with Fletcher-16 (arithmetic only, no bitwise
@@ -11,13 +11,21 @@
 # Tone length may be shorter than the slot ($tone < $sym) to leave a decay
 # gap against piezo ring-down; syncs always play full-length.
 #
-# Usage (paste whole file, or transport minified — no file write needed):
+# Usage (paste whole file, or transport minified - no file write needed):
 #   $enbeepAnnounce "ether1" 0 200ms 200ms no   # MAC+IPv4+cpu frame, live
 #   $enbeepAnnounce "ether1" 0 200ms 150ms no   # same, 50 ms decay gap
 #   $enbeepText "Hello" 200ms 200ms no          # text frame, live
 #   ... yes                                     # dry-run: :put trace, silent
 #
-# Validated: CHR 7.26beta3 (dry-run logic) + RB1100AHx4 (air). See notes.
+# LOAD BY PASTE, NOT /import: on 7.16.2 (RB953GS-5HnT, mipsbe),
+# :global functions defined via /import silently cannot call other
+# globals (nested calls no-op, no error). CLI-pasted definitions nest
+# fine. Single-line transport: strip #-lines, join with spaces (the
+# trailing `;` on every block closer makes this safe).
+#
+# Validated: CHR 7.26beta3 (dry-run logic) + RB1100AHx4 (air) +
+# RB953GS-5HnT 7.16.2 (paste-load only; piezo attacks slowly - short
+# tones ~15 dB under syncs, edge sweep tone may merge). See notes.
 
 :global enbeepTone do={
     :local freq $1; :local sym $2; :local dry $3; :local tone $4;
@@ -27,7 +35,7 @@
         :beep frequency=$freq length=$tone;
         :delay $sym;
     };
-}
+};
 
 :global enbeepXmit do={
     :local bytes $1; :local sym $2; :local dry $3; :local tone $4;
@@ -57,12 +65,12 @@
         $enbeepTone ($base + ((($b % 16)) * $step)) $sym $dry $tone;
     };
     :if ($dry = "yes") do={ :put "SYNC:1000ms"; } else={ :beep frequency=$sync length=1s; :delay 1s; };
-}
+};
 
 :global enbeepText do={
     :local text $1; :local sym $2; :local dry $3; :local tone $4;
     $enbeepXmit [:convert $text to=byte-array] $sym $dry $tone;
-}
+};
 
 :global enbeepAnnounce do={
     :local ifName $1; :local addrRow $2; :local sym $3; :local tone $4; :local dry $5;
@@ -87,4 +95,4 @@
     :set payload ($payload, [:tonum [/system/resource/get cpu-load]]);
     :if ($dry = "yes") do={ :put ("META mac=" . $macStr . " ip=" . $ipStr); };
     $enbeepXmit $payload $sym $dry $tone;
-}
+};

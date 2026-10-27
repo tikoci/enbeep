@@ -105,3 +105,45 @@ for (const name of [
     expect(res.payload!.slice(0, 10)).toEqual(MAC_IP); // address always survives
   });
 }
+
+// pierce (RB953GS-5HnT, 7.16.2) air captures: slow piezo + metal case ring
+// mask slot 0 after each sync. Second-hardware generality proof.
+const PIERCE_MAC_IP = [100, 209, 84, 155, 53, 229, 172, 22, 74, 194];
+
+for (const [name, sym] of [
+  ["pierce-g1.wav", 200],
+  ["pierce-k2.wav", 200],
+  ["pierce-h1.wav", 400],
+  ["pierce-h2.wav", 400],
+  ["pierce-m1.wav", 400],
+  ["pierce-m2.wav", 400],
+] as Array<[string, number]>) {
+  test(`${name} decodes exact via slot-0 repair`, async () => {
+    const res = await decodeSample(name, sym);
+    expect(res.problems).toEqual([]);
+    expect(res.ok).toBe(true);
+    expect(res.sweepDropout).toBe(true);
+    expect(res.dataErasure).toBe(true);
+    expect(res.payload!.slice(0, 10)).toEqual(PIERCE_MAC_IP);
+    expect(res.sumOk).toBe(true);
+  });
+}
+
+test("pierce-g2.wav sweep edge tone clipped by SEP, rejected", async () => {
+  const res = await decodeSample("pierce-g2.wav", 200);
+  expect(res.ok).toBe(false);
+  expect(res.problems.join(" ")).toMatch(/sweep mismatch/);
+});
+
+test("pierce-k1.wav rounding straddle with drift, rejected", async () => {
+  // Grid one slot late AND drifting: repair correctly fails closed.
+  const res = await decodeSample("pierce-k1.wav", 200);
+  expect(res.ok).toBe(false);
+  expect(res.problems.join(" ")).toMatch(/byte count/);
+});
+
+test("pierce-s2-300.wav weak-tone sweep scramble, rejected", async () => {
+  const res = await decodeSample("pierce-s2-300.wav", 300);
+  expect(res.ok).toBe(false);
+  expect(res.problems.join(" ")).toMatch(/sweep mismatch/);
+});

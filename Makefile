@@ -1,7 +1,10 @@
-.PHONY: test test-py typecheck decode serve
+.PHONY: test test-py typecheck lint-rsc decode serve
 
 test: ## Bun unit + archive regression tests
 	bun test
+
+lint-rsc: ## Offline syntax gate over the RouterOS encoder (needs centrs)
+	centrs explain --file encode/enbeep-frame.rsc
 
 test-py: ## Legacy Python analyzer tests (old calibration format)
 	.venv/bin/python -m unittest discover -s decode -p 'test_*.py' -q

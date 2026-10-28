@@ -1,85 +1,164 @@
 # enbeep
 
-MFSK-16 acoustic modem: a RouterOS piezo beeps, a microphone decodes.
-The demo payload is an **announce frame** — the router's MAC, IPv4, and a
-state byte — verified on screen with a checksum. The beep is the handshake,
-never the channel.
+Can a MikroTik router introduce itself by beeping its MAC and IP address?
+enbeep is a **fun, experimental acoustic modem** that tries exactly that:
+a RouterOS piezo plays tones, and a web page listens and checks the bytes.
+It uses MFSK-16 (16 pitches, four bits per tone), a calibration sweep, and
+a Fletcher-16 checksum. A typical announcement takes about 13 seconds.
 
-Status: working on air (RB1100AHx4 → Apogee MiC, 11/18 frames byte-exact,
-6 principled rejects, 1 false-accept on the retired v1 format).
+This is a demo and an ongoing experiment, with successful captures from
+two router models. It is fragile: the beeper, enclosure, microphone,
+room, and browser all matter. Expect rejected frames and hardware that
+needs more experiments. A checksum pass checks the received bytes; it
+does not authenticate the sender. Don't rely on this for provisioning,
+monitoring, discovery, or anything operational.
 
-## Quick start
+The receiver shows the interface MAC, a selected IPv4 address, and CPU
+load at transmit time. Those values travel audibly, without a network
+connection between sender and receiver. Part of the TIKOCI experiments;
+not affiliated with or endorsed by MikroTik.
+
+## Open the web interface
+
+**Pre-publication:** there is no verified public demo URL yet. Until
+[NS-1](NEXT_STEPS.md) records one, run the page locally:
 
 ```bash
 bun install
-make test            # 18 Bun tests (synth + air-capture regression)
-
-# Decode a recording (JSON result, exit 0 = verified):
-make decode FILE=samples/bigdude-v2-200a.wav SYM=200
-
-# Live decoder page (mic picker, waterfall, result card):
-make serve            # -> http://localhost:3456
+bun run serve
+# Open http://localhost:3456 on this computer.
 ```
 
-## The v2 frame
+The server provides the live decoder at `/` and the recording decoder at
+`/harness.html`. No router tools are needed on the receiving computer.
+Microphone access needs HTTPS or `localhost`; a phone opening
+`http://<laptop-ip>:3456` does not get the localhost exception. For a
+phone, use trusted HTTPS hosting (the planned GitHub Pages site), or
+`bun run serve:tls` for a local certificate experiment. The generated
+self-signed certificate may need device-specific trust setup; accepting
+a warning alone is not a portable mic-access recipe.
 
-Data tones at 2000+100·nibble Hz, 200 ms slots (100/300 also play):
+Keep the receiver page visible and the screen awake during a frame.
+Browser support is experimental: desktop live decoding has worked;
+**iPhone has passed only the in-page Self-test, not an over-air frame**.
+The [tested paths and capture instructions](docs/TESTING.md) distinguish
+automated checks from hardware evidence.
 
+## Try a beeping MikroTik router
+
+You need a RouterOS 7.15+ device with a working piezo beeper, terminal
+access, and a computer or phone with a microphone. Other models are
+untested; CHR can check encoder logic but cannot supply the acoustic test.
+
+1. Open the receiver page. In **Decode**, choose **200 ms** and press
+   **Start Listening**; allow microphone access. Place the mic about
+   0.3 m from the beeper in a quiet room.
+2. Follow [the encoder loading instructions](encode/README.md). They
+   cover a terminal paste or SSH, choosing your interface and IPv4
+   address, and a silent dry-run. (The page's **Try it** tab lists the
+   same load + `$enbeepText` commands.) On 7.16, loading via `/import`
+   or the API has failed; use the paste/SSH recipe. `/tool fetch`
+   loading is still an experiment.
+3. In that router terminal, after loading, run this example with **your
+   interface and address selection**:
+
+   ```routeros
+   $enbeepAnnounce "bridge" 0 200ms 200ms no
+   ```
+
+   Here `0` selects an IPv4 address entry; see the loading guide before
+   copying it. The MAC comes from the named interface, and the IP entry
+   is selected separately. This reads those values and sounds the
+   beeper; it does not configure networking or install a scheduler.
+4. Wait for the whole frame (~13 s). A verified result should match your
+   MAC/IP; CPU load varies between runs. A rejection is useful evidence,
+   too. For a slow beeper, try **400 ms** on the receiver and
+   `400ms 300ms no` on the router (~22 s).
+
+RB1100AHx4 and RB953GS-5HnT captures are in the
+[test results](docs/TESTING.md). Please report other models, whether they
+pass or fail.
+
+## Try two computers, laptops, or phones
+
+One device's speaker can stand in for the router. This uses the **same v2
+encoding**, including the sweep and checksum; it tests speakers and mics,
+not RouterOS or a router piezo. This walkthrough still needs reports
+from real device pairs.
+
+1. Open the live page on both devices. The receiving device needs HTTPS
+   or its own localhost server as described above.
+2. On the **receiver**, open **Decode**, choose **200 ms** and **Start
+   Listening**. Put it near the sender, with its page visible.
+3. On the **sender**, open **Try it**, type a message (or keep `Hello`),
+   and press **Play message**. It plays the message through the speaker
+   while also checking it internally. Use the built-in speaker at a
+   moderate volume, with headphones/Bluetooth disconnected. `Hello`
+   takes about 10 seconds plus a short wait; longer messages longer.
+4. Look at the **receiver's** result: it shows the message text plus hex.
+   A pass on the sender alone proves only its internal decoder. It does
+   not prove sound reached the other device. Both pages must use the
+   same symbol length; if you retry at 400 ms, set both before starting
+   again.
+
+For a one-device check, use **Diagnostics → Self-test**. To test saved
+audio, open `/harness.html`, choose a WAV from [samples/](samples/), and
+match its symbol length. The [corpus guide](samples/README.md) identifies
+successful frames, intentional rejects, probes, and legacy formats.
+
+## Report a success or a problem
+
+While the receiving page still has your attempt, open **Diagnostics →
+Copy diagnostics report** and save it. The report keeps your last
+session across one reset, but a second reset replaces it, so copy before
+retrying twice. Then stop listening and use **Run checks** for a
+separate environment check if needed; copy that report too.
+
+Open a GitHub issue using **Capture report** once the repo is public, or
+send the reports to the maintainer during this pre-publication phase.
+Include the router model/RouterOS version (or both speaker/mic devices),
+browser/OS, command, symbol length, distance, expected result, and what
+happened. A WAV recording and harness/CLI JSON are especially helpful.
+See [the reporting checklist](docs/TESTING.md#4-reporting-a-capture-what-actually-helps)
+and [troubleshooting guide](docs/DIAG.md).
+
+Review reports and recordings before sharing: they can expose MAC/IP,
+device labels, page URLs, and background speech. The live page processes
+audio locally, but posts verdicts and browser information to its own
+host's `api/frame`; the supplied development server saves these in
+ignored `frames.jsonl`. Static Pages hosting has no logging endpoint.
+The WAV harness does not upload recordings. The live page also requests
+optional Google Fonts; system fonts work when those are unavailable.
+
+## Work on the experiment
+
+Use Bun. For the audio regression suite, install Git LFS before cloning,
+then fetch the fixtures with `git lfs pull`.
+
+```bash
+bun install && bun test && bunx tsc --noEmit && bun run lint
+bun run frame:decode --file samples/bigdude-v2-200a.wav --sym 200
+# Optional real-browser checks (synthetic audio, not hardware evidence):
+bunx playwright install chromium
+bun run test:browser
 ```
-PRE  2s @ 4000 Hz + 16-tone sweep 2000..3500 (per-tx calibration)
-SEP  1s @ 4000 Hz
-DATA LEN, payload bytes, FLETCHER16 (2 tones/byte)
-END  1s @ 4000 Hz
-```
 
-No SOF/EOF tones — 1-tone 4000 Hz markers merge into the adjacent syncs.
-The 16-tone sweep calibrates pitch offset per transmission; Fletcher-16
-(arithmetic-only, RouterOS-safe) verifies the bytes.
+The current structure is deliberately small:
 
-## Encoder (RouterOS 7)
+| Path | Purpose |
+|---|---|
+| [encode/](encode/README.md) | RouterOS v2 encoder and loading recipes; older scripts are marked legacy |
+| `src/` | WAV I/O, DSP, offline frame decoder, test synthesis |
+| [live.html](live.html), [serve.ts](serve.ts) | Live Web Audio receiver and development server |
+| [harness.html](harness.html), `web/` | Recording decoder using the shared offline codec |
+| `test/`, [samples/](samples/README.md) | Synthetic tests and real acoustic regressions |
+| [rig/](rig/README.md) | Optional Linux recording/trigger tools for repeated hardware trials |
+| `decode/`, `samples/legacy/` | Retired experiments + batch tools; outside the v2 path |
 
-`encode/enbeep-frame.rsc` — paste the file or transport it minified over
-SSH (no router file writes). Needs 7.15+ (`:convert … to=byte-array`).
+Start agent/contributor work at [AGENTS.md](AGENTS.md) and
+[NEXT_STEPS.md](NEXT_STEPS.md), the sole work tracker. The
+[wire spec](docs/SPEC.md) is authoritative; keep both decoders and the
+encoder aligned. Use ignored `.scratch/` for work worth retaining locally
+between sessions; it is not part of a clone or a published test result.
 
-```routeros
-$enbeepAnnounce "bridge" 0 200ms 200ms no   # MAC+IPv4+cpu frame, live
-$enbeepText "Hello" 200ms 200ms no          # text frame, live
-$enbeepAnnounce "bridge" 0 200ms 200ms yes  # dry-run: :put trace, silent
-```
-
-Args are `(interface, addressRow, symbol, tone, dry)`. Tone may be shorter
-than the slot (`200ms 150ms`) but measured air shows no benefit — the room,
-not the piezo, dominates smear. Long frames need `--timeout 30s` on the
-SSH transport (10 s default kills a 12.8 s frame mid-payload).
-
-## Decoder (Bun, zero deps)
-
-- `src/decode.ts` — offline WAV → JSON CLI (`--file`, `--sym`).
-- `src/{wav,dsp,frame,synth}.ts` — WAV IO, FFT detectors, v2 codec, synth.
-- `live.html` (+ `serve.ts`) — live mic decoder: slot-counting state
-  machine (repeat-nibble safe), sweep calibration, result card with ✓/✗,
-  mic + symbol pickers, self-test (synthesized, never film as hardware).
-- `test/` — `bun test`: codec unit tests plus every air capture as a
-  regression case (v1 captures assert the format break loudly).
-
-## Samples
-
-`samples/bigdude-*.wav` — the regression corpus: probe sweep, v1 speed
-matrix (100/200/300 ms) at two mic positions, v2 control + gap runs.
-Ground truth: bridge MAC `74:4D:28:38:B3:CD`, lab IP `172.22.74.254/24`
-(video-safe range), cpu sampled per run. `samples/legacy/` holds the retired
-iPhone-era captures (hAP ac lite, March 2026); `decode/*.py` is the analyzer
-for that old calibration format (`make test-py`). Neither is on the v2 path.
-
-## Measured findings (bigdude + MiC, Oct 2026)
-
-- 200/300 ms: exact decodes, offsets −0.2…+0.4 Hz, timing nominal.
-- 100 ms: acoustic ISI (quiet-after-loud smear), durations still exact —
-  the old "`:delay` rounds to 0 / +100 Hz piezo" claims reproduce on
-  neither tested hardware.
-- 1 m off-axis costs ~14 dB SNR (39 → 25 dB); still decodes.
-- Failure mode is always ring-down smear onto a wrong-but-confident
-  center — only the checksum catches it (Fletcher-16: 1/65536 class).
-  Sampling slots late ([50%,90%]) beats centered windows because ring
-  decays while the driven tone holds; the systematic killer is the
-  3400→2000 Hz transition (cpu and checksum high nibbles when <16).
+License: [MIT](LICENSE).

@@ -1,4 +1,4 @@
-# enbeep-frame.rsc - general MFSK-16 frame encoder, v2 (RouterOS 7).
+# enbeep.rsc - general MFSK-16 frame encoder, v2 (RouterOS 7).
 #
 # Frame (data tones at symbol length $sym; 2000+100*n Hz, high nibble first):
 #   PRE  2s @ 4000 Hz + 16-tone sweep 2000..3500 (per-tx calibration)
@@ -16,16 +16,20 @@
 #   $enbeepAnnounce "ether1" 0 200ms 150ms no   # same, 50 ms decay gap
 #   $enbeepText "Hello" 200ms 200ms no          # text frame, live
 #   ... yes                                     # dry-run: :put trace, silent
+# Unload (globals are RAM-only, but you can drop them without a reboot):
+#   /system/script/environment/remove [find where name~"enbeep"]
 #
-# LOAD BY PASTE, NOT /import: on 7.16.2 (RB953GS-5HnT, mipsbe),
-# :global functions defined via /import silently cannot call other
-# globals (nested calls no-op, no error). CLI-pasted definitions nest
-# fine. Single-line transport: strip #-lines, join with spaces (the
-# trailing `;` on every block closer makes this safe).
+# Nested globals follow the scripting manual: each body re-declares the
+# globals it calls (:global enbeepTone; etc.), so loading via /import or
+# [:parse ...] resolves the same way a CLI paste does. A 7.16 /import
+# nesting failure predates this hardening and still needs a re-test on
+# real 7.16 hardware; until then, paste remains the verified recipe.
+# Single-line transport: strip #-lines, join with spaces (the trailing
+# `;` on every block closer makes this safe).
 #
-# Validated: CHR 7.26beta3 (dry-run logic) + RB1100AHx4 (air) +
-# RB953GS-5HnT 7.16.2 (paste-load only; piezo attacks slowly - short
-# tones ~15 dB under syncs, edge sweep tone may merge). See notes.
+# Validated: CHR 7.26beta3 (dry-run logic, incl. API-loaded nesting) +
+# RB1100AHx4 (air) + RB953GS-5HnT 7.16.2 (paste-load only; piezo attacks
+# slowly - short tones ~15 dB under syncs, edge sweep tone may merge).
 
 :global enbeepTone do={
     :local freq $1; :local sym $2; :local dry $3; :local tone $4;
@@ -38,9 +42,19 @@
 };
 
 :global enbeepXmit do={
+    :global enbeepTone;
     :local bytes $1; :local sym $2; :local dry $3; :local tone $4;
-    :local base 2000; :local step 100; :local sync 4000;
     :local len [:len $bytes];
+    :if ($len < 1 || $len > 255) do={ :error ("enbeep: payload is " . $len . " bytes, want 1..255"); };
+    # Args arrive as strings, and [:totime "200"] silently means 200
+    # SECONDS, so validate into time locals with a sanity range: bare
+    # numbers (or hour-long typos) fail fast instead of beeping for
+    # hours. The original strings still feed :delay/:beep, which coerce.
+    :local symT; :local toneT;
+    :do { :set symT [:totime $sym]; :set toneT [:totime $tone]; } on-error={ :error "enbeep: sym and tone must be times, e.g. 200ms 200ms"; };
+    :if ($symT < 50ms || $symT > 10s || $toneT < 1ms || $toneT > 10s) do={ :error "enbeep: sym/tone out of range (sym 50ms..10s, tone 1ms..10s)"; };
+    :if ($toneT > $symT) do={ :error "enbeep: tone must not exceed sym (see header)"; };
+    :local base 2000; :local step 100; :local sync 4000;
     :local acc [:convert "" to=byte-array];
     :set acc ($acc, $len);
     :for i from=0 to=($len - 1) do={ :set acc ($acc, ($bytes->$i)); };
@@ -61,6 +75,8 @@
     :set run ($run, $s2);
     :for i from=0 to=([:len $run] - 1) do={
         :local b ($run->$i);
+        # Spaced / and % are integer division and remainder (RouterOS
+        # numbers are 64-bit ints); unspaced 65/16 parses as a path.
         $enbeepTone ($base + ((($b / 16)) * $step)) $sym $dry $tone;
         $enbeepTone ($base + ((($b % 16)) * $step)) $sym $dry $tone;
     };
@@ -68,20 +84,24 @@
 };
 
 :global enbeepText do={
+    :global enbeepXmit;
     :local text $1; :local sym $2; :local tone $3; :local dry $4;
     $enbeepXmit [:convert $text to=byte-array] $sym $dry $tone;
 };
 
 :global enbeepAnnounce do={
+    :global enbeepXmit;
     :local ifName $1; :local addrRow $2; :local sym $3; :local tone $4; :local dry $5;
-    :local macStr [/interface/get $ifName mac-address];
+    :local macStr "";
+    :do { :set macStr [/interface/get $ifName mac-address]; } on-error={ :error ("enbeep: no such interface: " . $ifName); };
     :local hexd "";
     :for i from=0 to=([:len $macStr] - 1) do={
         :local c [:pick $macStr $i];
         :if ($c != ":") do={ :set hexd ($hexd . $c); };
     };
     :local mac [:convert $hexd from=hex to=byte-array];
-    :local addrStr [/ip/address/get $addrRow address];
+    :local addrStr "";
+    :do { :set addrStr [/ip/address/get $addrRow address]; } on-error={ :error ("enbeep: no such address row: " . [:tostr $addrRow]); };
     :local ipStr [:pick $addrStr 0 [:find $addrStr "/"]];
     :local payload [:convert "" to=byte-array];
     :for i from=0 to=5 do={ :set payload ($payload, ($mac->$i)); };

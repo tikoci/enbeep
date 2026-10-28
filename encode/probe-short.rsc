@@ -1,3 +1,4 @@
+# Minimal v2 probe (sweep-only). For the full frame use enbeep-frame.rsc.
 # probe-short.rsc — minimal audibility/timing probe (bigdude-approved 2026-10-26).
 # 2s @ 4000 Hz, 16 data freqs @ 200ms, 2s @ 4000 Hz. Total ~7.2s.
 # One-liner form (SSH/console): the :global block below also runs inline as

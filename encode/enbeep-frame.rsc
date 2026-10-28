@@ -68,7 +68,7 @@
 };
 
 :global enbeepText do={
-    :local text $1; :local sym $2; :local dry $3; :local tone $4;
+    :local text $1; :local sym $2; :local tone $3; :local dry $4;
     $enbeepXmit [:convert $text to=byte-array] $sym $dry $tone;
 };
 

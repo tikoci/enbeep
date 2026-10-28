@@ -1,3 +1,5 @@
+# SUPERSEDED hardcoded test — do not use for frames. Superseded by enbeep-frame.rsc.
+# (Kept as the v1-era calibration/payload capture script for samples/ regression history.)
 # enbeep-200ms.rsc
 # Focused calibration + payload test using ONLY 200ms symbols.
 #

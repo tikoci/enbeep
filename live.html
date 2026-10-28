@@ -3,83 +3,261 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <!-- Optional tikoci fonts: used when online, system stacks otherwise. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Manrope:wght@200..800&display=swap">
     <title>enbeep — Live Acoustic Decoder</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        /* Pico v2.1 dark tokens, mirrored (not imported): the page reads as
+           tikoci-family dark with zero styling dependencies. */
+        :root {
+            color-scheme: dark;
+            --bg: rgb(19, 22.5, 30.5);
+            --text: #c2c7d0;
+            --muted: #7b8495;
+            --muted-border: #202632;
+            --primary: #01aaff;
+            --primary-bg: #0172ad;
+            --primary-hover: #79c0ff;
+            --contrast: #dfe3eb;
+            --secondary: #969eaf;
+            --secondary-bg: #525f7a;
+            --card: #181c25;
+            --form-bg: rgb(28, 33, 43.5);
+            --form-border: #2a3140;
+            --form-text: #e0e3e7;
+            --code-bg: rgb(26, 30.5, 40.25);
+            --radius: 0.25rem;
+            --ok: #00cc66;
+            --err: #ff4a4a;
+            --sync: #ffaa00;
+        }
         body {
-            font-family: -apple-system, system-ui, sans-serif;
-            background: #0a0a0a;
-            color: #e0e0e0;
+            font-family: "JetBrains Mono", Manrope, -apple-system, system-ui, "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100dvh;
             padding: 1rem;
             max-width: 600px;
             margin: 0 auto;
         }
-        header { margin-bottom: 1.25rem; }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+        }
         h1 { font-size: 1.4rem; letter-spacing: -0.02em; }
-        .subtitle { color: #666; font-size: 0.85rem; margin-top: 0.15rem; }
+        .subtitle { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
+        .nav-brand-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            text-decoration: none;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .nav-brand-link:hover { text-decoration: none; opacity: 0.85; }
+        .nav-brand-link .brand-reverse {
+            font-size: 0.9rem;
+            padding: 0.05em 0.35em;
+        }
+        .nav-mt-full {
+            height: 1.4rem;
+            width: auto;
+            flex-shrink: 0;
+        }
+        .nav-mt-symbol {
+            height: 1.4rem;
+            width: auto;
+            flex-shrink: 0;
+            display: none;
+        }
+        .nav-mt-full,
+        .nav-mt-symbol {
+            color: #fff;
+        }
+        .nav-by {
+            font-size: 0.78rem;
+            color: var(--muted);
+            font-style: italic;
+        }
+        .brand-reverse {
+            display: inline-block;
+            background: linear-gradient(135deg, #3660B9, #5F2965);
+            color: #fff;
+            padding: 0.05em 0.4em;
+            border-radius: var(--radius);
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            line-height: 1.5;
+            text-decoration: none;
+        }
+        .brand-reverse:hover,
+        .brand-reverse:visited {
+            color: #fff;
+            text-decoration: none;
+        }
+        @media (max-width: 576px) {
+            .nav-mt-full { display: none; }
+            .nav-mt-symbol { display: inline; }
+        }
+        button, select, textarea { font-family: inherit; }
 
         .controls { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
         button {
             flex: 1;
             padding: 0.8rem 1rem;
             font-size: 1rem;
-            border: 2px solid #333;
+            font-weight: 600;
+            border: 2px solid var(--secondary-bg);
             background: transparent;
-            color: #999;
-            border-radius: 8px;
+            color: var(--secondary);
+            border-radius: var(--radius);
             cursor: pointer;
             transition: all 0.15s;
             -webkit-tap-highlight-color: transparent;
         }
         button:active { transform: scale(0.98); }
-        #startBtn { border-color: #4a9eff; color: #4a9eff; flex: 2; }
-        #startBtn:active { background: #4a9eff15; }
-        #startBtn.listening { border-color: #ff4a4a; color: #ff4a4a; }
-        #startBtn.listening:active { background: #ff4a4a15; }
-        #selfBtn { border-color: #555; color: #888; }
-        #selfBtn:active { background: #ffffff08; }
+        button:focus-visible, select:focus-visible, textarea:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+        }
+        #startBtn { border-color: var(--primary); color: var(--primary); flex: 2; }
+        #startBtn:active { background: rgba(1, 170, 255, 0.08); }
+        #startBtn.listening { border-color: var(--err); color: var(--err); }
+        #startBtn.listening:active { background: rgba(255, 74, 74, 0.08); }
+        #selfBtn:active { background: rgba(255, 255, 255, 0.03); }
         #selfBtn:disabled { opacity: 0.3; cursor: default; }
 
         .pickers { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
-        .pickers label { flex: 1; font-size: 0.75rem; color: #666; }
+        .pickers label { flex: 1; font-size: 0.75rem; color: var(--muted); }
         .pickers select {
             display: block;
             width: 100%;
             margin-top: 0.2rem;
             padding: 0.5rem;
             font-size: 0.9rem;
-            background: #111;
-            color: #e0e0e0;
-            border: 1px solid #333;
-            border-radius: 6px;
+            background: var(--form-bg);
+            color: var(--form-text);
+            border: 1px solid var(--form-border);
+            border-radius: var(--radius);
         }
-        .selfnote { font-size: 0.75rem; color: #555; margin: -0.5rem 0 1rem 0; }
+        .selfnote { font-size: 0.75rem; color: var(--muted); margin: -0.5rem 0 1rem 0; }
+
+        .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+        .tab { flex: 1; border-color: var(--secondary-bg); color: var(--secondary); padding: 0.6rem 1rem; }
+        .tab.active { border-color: var(--primary); color: var(--contrast); background: rgba(1, 170, 255, 0.08); }
+        .view { display: none; }
+        .view.active { display: block; }
+
+        .tryintro { font-size: 0.85rem; line-height: 1.55; margin-bottom: 0.5rem; }
+        .tryhead { font-size: 0.95rem; color: var(--contrast); margin: 1rem 0 0.4rem 0; }
+        .trysteps { margin: 0 0 0.5rem 1.25rem; font-size: 0.82rem; line-height: 1.6; }
+        .trysteps li { margin-bottom: 0.6rem; }
+        .trysteps a { color: var(--primary); }
+        .trysteps code, .trynote code {
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.76rem;
+            background: var(--code-bg);
+            padding: 0.05em 0.3em;
+            border-radius: 3px;
+        }
+        pre.cmd {
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.76rem;
+            background: var(--code-bg);
+            border: 1px solid var(--form-border);
+            border-radius: var(--radius);
+            padding: 0.5rem 0.6rem;
+            margin: 0.35rem 0;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .copybtn { flex: 0 0 auto; padding: 0.3rem 0.8rem; font-size: 0.75rem; }
+        .trynote { font-size: 0.78rem; color: var(--muted); line-height: 1.55; margin: 0.4rem 0; }
+        .trynote b { color: var(--text); font-weight: 600; }
+        .sender {
+            background: var(--card);
+            border: 1px solid var(--muted-border);
+            border-radius: var(--radius);
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+        }
+        .msglabel { display: block; font-size: 0.75rem; color: var(--muted); }
+        #tryMsg {
+            display: block;
+            width: 100%;
+            margin-top: 0.25rem;
+            padding: 0.6rem;
+            font-size: 1rem;
+            background: var(--form-bg);
+            color: var(--form-text);
+            border: 1px solid var(--form-border);
+            border-radius: var(--radius);
+        }
+        .sendrow { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
+        #playBtn { border-color: var(--primary); color: var(--primary); }
+        #playBtn:disabled { opacity: 0.4; cursor: default; }
+        .trymeta { font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; }
+        .tryerr { font-size: 0.78rem; color: var(--err); min-height: 1.2em; margin-top: 0.2rem; }
+        #result .rline.textline { font-size: 0.85rem; color: var(--muted); }
+
+        .checks { margin-bottom: 1rem; }
+        .check {
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.78rem;
+            line-height: 1.6;
+            color: var(--muted);
+        }
+        .check.ok { color: var(--ok); }
+        .check.bad { color: var(--err); }
+
+        .report { margin-bottom: 1rem; }
+        .report .controls { margin-bottom: 0.4rem; }
+        .report-status { font-size: 0.78rem; color: var(--muted); min-height: 1.2em; margin-bottom: 0.4rem; }
+        #reportText {
+            width: 100%;
+            min-height: 8rem;
+            background: var(--form-bg);
+            color: var(--form-text);
+            border: 1px solid var(--form-border);
+            border-radius: var(--radius);
+            padding: 0.6rem;
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.72rem;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
 
         #status {
             text-align: center;
             padding: 0.4rem;
             font-size: 0.85rem;
-            color: #555;
+            color: var(--muted);
             margin-bottom: 0.75rem;
         }
-        #status.sync { color: #ffaa00; }
-        #status.decoding { color: #00cc66; }
-        #status.done { color: #4a9eff; }
-        #status.error { color: #ff4a4a; }
+        #status.sync { color: var(--sync); }
+        #status.decoding { color: var(--ok); }
+        #status.done { color: var(--primary); }
+        #status.error { color: var(--err); }
 
         .waterfall-wrap {
             position: relative;
             margin-bottom: 0.5rem;
-            border-radius: 6px;
+            border-radius: var(--radius);
             overflow: hidden;
-            background: #111;
+            background: var(--card);
         }
         #waterfall { display: block; width: 100%; height: 200px; }
         .freq-axis {
             position: absolute;
             right: 6px;
-            font-family: monospace;
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             font-size: 9px;
             color: rgba(255,255,255,0.35);
             pointer-events: none;
@@ -90,103 +268,212 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-family: monospace;
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             font-size: 0.8rem;
-            color: #444;
+            color: var(--muted);
             margin-bottom: 0.75rem;
         }
-        .indicator .active { color: #e0e0e0; }
+        .indicator .active { color: var(--contrast); }
 
         #result {
-            border: 1px solid #333;
-            border-radius: 8px;
+            background: var(--card);
+            border: 1px solid var(--muted-border);
+            border-radius: var(--radius);
             padding: 0.9rem 1rem;
             margin-bottom: 0.75rem;
-            font-family: monospace;
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             display: none;
         }
         #result.show { display: block; }
-        #result.ok { border-color: #00cc66; }
-        #result.bad { border-color: #ff4a4a; }
+        #result.ok { border-color: var(--ok); }
+        #result.bad { border-color: var(--err); }
         #result .rline { font-size: 1.05rem; margin: 0.15rem 0; }
-        #result .rmeta { font-size: 0.8rem; color: #888; margin-top: 0.3rem; }
+        #result .rmeta { font-size: 0.8rem; color: var(--muted); margin-top: 0.3rem; }
         #result .tick { font-size: 1.4rem; font-weight: bold; }
-        #result.ok .tick { color: #00cc66; }
-        #result.bad .tick { color: #ff4a4a; }
+        #result.ok .tick { color: var(--ok); }
+        #result.bad .tick { color: var(--err); }
 
         #decoded-output {
-            font-family: monospace;
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             font-size: 0.85rem;
             line-height: 1.5;
-            background: #111;
-            border-radius: 6px;
+            background: var(--code-bg);
+            border-radius: var(--radius);
             padding: 0.75rem;
             min-height: 3rem;
             white-space: pre-wrap;
             word-break: break-all;
             margin-bottom: 0.75rem;
         }
-        #decoded-output .cursor { color: #4a9eff; animation: blink 1s infinite; }
+        #decoded-output .cursor { color: var(--primary); animation: blink 1s infinite; }
         @keyframes blink { 50% { opacity: 0; } }
 
         #nibble-log {
-            font-family: monospace;
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             font-size: 0.75rem;
             line-height: 1.45;
-            color: #666;
+            color: var(--muted);
             max-height: 180px;
             overflow-y: auto;
             margin-bottom: 1rem;
         }
-        #nibble-log .log-sync { color: #ffaa00; }
-        #nibble-log .log-byte { color: #4a9eff; }
-        #nibble-log .log-err { color: #ff4a4a; }
-        #nibble-log .log-ok { color: #00cc66; }
+        #nibble-log .log-sync { color: var(--sync); }
+        #nibble-log .log-byte { color: var(--primary); }
+        #nibble-log .log-err { color: var(--err); }
+        #nibble-log .log-ok { color: var(--ok); }
 
-        footer { font-size: 0.75rem; color: #444; text-align: center; }
+        .site-footer {
+            border-top: 1px solid var(--muted-border);
+            margin-top: 2rem;
+            padding-top: 1rem;
+            padding-bottom: 1rem;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .site-footer small {
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-style: italic;
+        }
+        .site-footer a { color: var(--secondary); }
     </style>
 </head>
 <body>
-    <header>
-        <h1>enbeep</h1>
-        <div class="subtitle">v2 live frame decoder — MAC/IP announce</div>
+    <header class="topbar">
+        <div>
+            <h1>enbeep</h1>
+            <div class="subtitle">v2 acoustic modem — send + receive beeped messages</div>
+        </div>
+        <a href="https://tikoci.dev/" class="nav-brand-link" target="_blank" rel="noopener">
+            <svg class="nav-mt-full" viewBox="0 0 258.95 44.62" xmlns="http://www.w3.org/2000/svg" aria-label="MikroTik"><path d="M160.74,13.41v2.5c0,.47-.38.84-.85.82-.71-.03-1.7-.06-2.3-.07-3.39,0-5.26,2.02-5.26,5.69v9.1c0,.45-.37.82-.82.82h-2.97c-.45,0-.82-.37-.82-.82V13.17c0-.45.37-.82.82-.82h2.83c.45,0,.82.37.82.82v1.16c1.35-1.4,3.52-2.16,6.19-2.16.44,0,1,.06,1.39.12.55.07.97.55.97,1.11ZM130.32,21.1c-.16-.21-.14-.5.04-.68l7.31-7.19c.33-.32.1-.88-.36-.88h-4.26c-.21,0-.4.08-.55.22l-8.24,7.56c-.33.3-.86.07-.86-.38v-6.58c0-.45-.37-.82-.82-.82h-2.97c-.45,0-.82.37-.82.82v18.27c0,.45.37.82.82.82h2.97c.46,0,.82-.37.82-.83l-.03-4.24c0-.23.09-.45.26-.61l2.56-2.38c.22-.2.56-.18.75.05l6.19,7.69c.16.19.39.31.64.31h4.27c.43,0,.67-.49.4-.83l-8.14-10.33ZM106.06,12.35h-2.97c-.45,0-.82.37-.82.82v18.27c0,.45.37.82.82.82h2.97c.45,0,.82-.37.82-.82V13.17c0-.45-.37-.82-.82-.82ZM212.57,12.35h-17.95c-.45,0-.82.37-.82.82v2.66c0,.45.37.82.82.82h6.1c.28,0,.51.23.51.51v14.28c0,.45.37.82.82.82h3.08c.45,0,.82-.37.82-.82v-14.28c0-.28.23-.51.51-.51h6.1c.45,0,.82-.37.82-.82v-2.66c0-.45-.37-.82-.82-.82ZM187.59,22.31c0,5.89-4.33,10.17-10.31,10.17s-10.34-4.28-10.34-10.17,4.35-10.13,10.34-10.13,10.31,4.26,10.31,10.13ZM182.94,22.31c0-3.55-2.27-5.94-5.66-5.94s-5.69,2.44-5.69,5.94,2.34,5.97,5.69,5.97,5.66-2.46,5.66-5.97ZM226.43,12.35h-2.97c-.45,0-.82.37-.82.82v18.27c0,.45.37.82.82.82h2.97c.45,0,.82-.37.82-.82V13.17c0-.45-.37-.82-.82-.82ZM82.08,12.18c-2.68,0-5.09.92-6.74,2.56-.22.22-.56.2-.76-.03-1.41-1.63-3.57-2.53-6.17-2.53-2.39,0-4.43.71-5.83,2.02v-1.02c0-.45-.37-.82-.82-.82h-2.83c-.45,0-.82.37-.82.82v18.27c0,.45.37.82.82.82h2.97c.45,0,.82-.37.82-.82v-9.41c0-3.55,1.82-5.59,4.99-5.59,2.79,0,4.21,1.63,4.21,4.85v10.15c0,.45.37.82.82.82h2.97c.45,0,.82-.37.82-.82v-9.41c0-3.55,1.82-5.59,4.99-5.59,2.8,0,4.21,1.63,4.21,4.85v10.15c0,.45.37.82.82.82h2.97c.45,0,.82-.37.82-.82v-10.54c0-5.54-3.01-8.72-8.26-8.72ZM258.84,31.43l-8.14-10.33c-.16-.21-.14-.5.04-.68l7.31-7.19c.33-.32.1-.88-.36-.88h-4.26c-.21,0-.4.08-.55.22l-8.24,7.56c-.33.3-.86.07-.86-.38v-6.58c0-.45-.37-.82-.82-.82h-2.97c-.45,0-.82.37-.82.82v18.27c0,.45.37.82.82.82h2.97c.46,0,.82-.37.82-.83l-.03-4.24c0-.23.09-.45.26-.61l2.56-2.38c.22-.2.56-.18.75.06l6.19,7.69c.16.19.39.31.64.31h4.27c.43,0,.67-.49.4-.83Z" fill="currentColor"/><path d="M41.83,13.83c0-1.77-.96-3.4-2.5-4.26L23.3.62c-1.48-.83-3.28-.83-4.76,0L2.5,9.57c-1.54.86-2.5,2.49-2.5,4.26v17.08c0,1.78.97,3.42,2.53,4.28l16.04,8.82c1.46.81,3.24.81,4.7,0l16.04-8.82c1.56-.86,2.53-2.5,2.53-4.28V13.83ZM12.03,30.78c0,.4-.43.65-.78.46l-2.68-1.48c-.56-.31-.9-.89-.9-1.53v-8.07c0-.4.43-.65.78-.46l2.95,1.63c.39.21.63.62.63,1.07v8.38ZM34.16,28.19c0,.63-.34,1.22-.9,1.53l-2.68,1.48c-.35.19-.78-.06-.78-.46v-10.32c0-.4-.43-.65-.78-.46l-4.95,2.73c-.56.31-.9.89-.9,1.53v10.55c0,.32-.17.61-.45.76l-1.01.56c-.52.29-1.16.29-1.69,0l-.94-.52c-.28-.15-.45-.45-.45-.76v-10.66c0-.63-.34-1.22-.9-1.53l-9.81-5.42c-.17-.09-.27-.27-.27-.46v-.42c0-.63.34-1.22.9-1.53l1.4-.77c.52-.29,1.16-.29,1.69,0l8.48,4.69c.52.29,1.16.29,1.69,0l3.81-2.11c.36-.2.36-.72,0-.92l-8.51-4.7c-.36-.2-.36-.72,0-.92l2.9-1.6c.52-.29,1.16-.29,1.69,0l11.55,6.38c.56.31.9.89.9,1.53v11.81Z" fill="currentColor"/></svg>
+            <svg class="nav-mt-symbol" viewBox="0 0 41.83 44.62" xmlns="http://www.w3.org/2000/svg" aria-label="MikroTik"><path d="M41.83,13.83c0-1.77-.96-3.4-2.5-4.26L23.3.62c-1.48-.83-3.28-.83-4.76,0L2.5,9.57c-1.54.86-2.5,2.49-2.5,4.26v17.08c0,1.78.97,3.42,2.53,4.28l16.04,8.82c1.46.81,3.24.81,4.7,0l16.04-8.82c1.56-.86,2.53-2.5,2.53-4.28V13.83ZM12.03,30.78c0,.4-.43.65-.78.46l-2.68-1.48c-.56-.31-.9-.89-.9-1.53v-8.07c0-.4.43-.65.78-.46l2.95,1.63c.39.21.63.62.63,1.07v8.38ZM34.16,28.19c0,.63-.34,1.22-.9,1.53l-2.68,1.48c-.35.19-.78-.06-.78-.46v-10.32c0-.4-.43-.65-.78-.46l-4.95,2.73c-.56.31-.9.89-.9,1.53v10.55c0,.32-.17.61-.45.76l-1.01.56c-.52.29-1.16.29-1.69,0l-.94-.52c-.28-.15-.45-.45-.45-.76v-10.66c0-.63-.34-1.22-.9-1.53l-9.81-5.42c-.17-.09-.27-.27-.27-.46v-.42c0-.63.34-1.22.9-1.53l1.4-.77c.52-.29,1.16-.29,1.69,0l8.48,4.69c.52.29,1.16.29,1.69,0l3.81-2.11c.36-.2.36-.72,0-.92l-8.51-4.7c-.36-.2-.36-.72,0-.92l2.9-1.6c.52-.29,1.16-.29,1.69,0l11.55,6.38c.56.31.9.89.9,1.53v11.81Z" fill="currentColor"/></svg>
+            <em class="nav-by">by</em>
+            <strong class="brand-reverse">TIKOCI</strong>
+        </a>
     </header>
 
-    <div class="controls">
-        <button id="startBtn">Start Listening</button>
-        <button id="selfBtn">Self-test</button>
-    </div>
-    <div class="selfnote">Self-test synthesizes a frame in-page (no mic) — a decoder check only.</div>
-    <div class="pickers">
-        <label>Microphone
-            <select id="micSel"><option value="">Default input</option></select>
-        </label>
-        <label>Symbol
-            <select id="symSel">
-                <option value="100">100 ms</option>
-                <option value="200" selected>200 ms</option>
-                <option value="300">300 ms</option>
-            </select>
-        </label>
+    <div class="tabs" role="tablist" aria-label="Views">
+        <button id="tabTry" class="tab active" role="tab" aria-selected="true">Try it</button>
+        <button id="tabDecode" class="tab" role="tab" aria-selected="false">Decode</button>
+        <button id="tabDiag" class="tab" role="tab" aria-selected="false">Diagnostics</button>
     </div>
 
-    <div id="status">Ready</div>
+    <section id="view-try" class="view active" role="tabpanel" aria-label="Try it">
+        <p class="tryintro">enbeep sends short messages as beeps &mdash; sixteen pitches a
+        microphone can hear and check. Pick a sender below, then listen here or on a
+        second device. It is an experiment: quiet rooms and matching symbol lengths matter.</p>
 
-    <div class="waterfall-wrap" id="waterfallWrap">
-        <canvas id="waterfall"></canvas>
-    </div>
-    <div class="indicator">
-        <span id="freqLabel">&mdash;</span>
-        <span id="nibbleLabel">&mdash;</span>
-        <span id="confLabel">&mdash;</span>
-    </div>
+        <h2 class="tryhead">A &mdash; Send from a MikroTik router</h2>
+        <ol class="trysteps">
+            <li>In a router terminal, check the beeper:
+                <code>:beep frequency=4000 length=500ms</code>.
+                No sound means no sender on this box.</li>
+            <li>Load the encoder: open <a href="./enbeep-frame.rsc">enbeep-frame.rsc</a>
+                and paste the whole file into that terminal. Paste, do not
+                <code>/import</code> &mdash; on 7.16 imported globals silently cannot
+                call each other. Globals are RAM-only: reload after reboot.</li>
+            <li>Dry-run silently (edit the message, keep the quotes plain):
+                <pre class="cmd" id="rosDry">$enbeepText "Hello" 200ms 200ms yes</pre>
+                <button class="copybtn" id="copyDry">Copy</button>
+                Expect <code>FRAME</code> and <code>T:</code> lines. Anything else means
+                the load failed &mdash; paste step 2 again.</li>
+            <li>On the listener, open the <b>Decode</b> tab, pick the same symbol
+                length, press <b>Start Listening</b>, and hold the mic ~0.3&nbsp;m
+                from the beeper.</li>
+            <li>Back on the router, play it for real:
+                <pre class="cmd" id="rosLive">$enbeepText "Hello" 200ms 200ms no</pre>
+                <button class="copybtn" id="copyLive">Copy</button>
+                Keep the terminal connected through the frame (~13&nbsp;s at 200&nbsp;ms).
+                The MAC/IP announce variant is
+                <code>$enbeepAnnounce "bridge" 0 200ms 200ms no</code>
+                (interface + address row are yours to choose).</li>
+        </ol>
 
-    <div id="result"></div>
-    <div id="decoded-output"><span class="cursor">&#9612;</span></div>
-    <div id="nibble-log"></div>
+        <h2 class="tryhead">B &mdash; Send from this speaker</h2>
+        <p class="trynote">One device's speaker stands in for the router &mdash; same v2
+        tones and checksum. Type a message, play it, and listen on a second device.</p>
+        <div class="sender">
+            <label class="msglabel">Message
+                <input id="tryMsg" type="text" value="Hello" autocomplete="off"
+                    autocapitalize="off" spellcheck="false" maxlength="255">
+            </label>
+            <div class="sendrow">
+                <button id="playBtn">Play message</button>
+            </div>
+            <div id="tryMeta" class="trymeta"></div>
+            <div id="tryErr" class="tryerr" aria-live="polite"></div>
+        </div>
+        <p class="trynote">Sender and receiver must use the same symbol length (Decode tab).
+        This page also decodes its own playback &mdash; only the <i>other</i> device's
+        result proves sound crossed the room.</p>
 
-    <footer>
-        Real-time MFSK-16 frame decoding via Web Audio AnalyserNode
+        <h2 class="tryhead">If it fails</h2>
+        <p class="trynote">Check the symbol match first, then distance, speaker volume,
+        and room noise. Rejections are data: open <b>Diagnostics &rarr; Copy diagnostics
+        report</b> while the attempt is still on screen &mdash; the report keeps your
+        last session across one reset. Slow or quiet beeper? Try 400&nbsp;ms both sides.</p>
+    </section>
+
+    <section id="view-decode" class="view" role="tabpanel" aria-label="Decode">
+        <div class="controls">
+            <button id="startBtn">Start Listening</button>
+        </div>
+        <div class="pickers">
+            <label>Microphone
+                <select id="micSel"><option value="">Default input</option></select>
+            </label>
+            <label>Symbol
+                <select id="symSel">
+                    <option value="100">100 ms</option>
+                    <option value="200" selected>200 ms</option>
+                    <option value="300">300 ms</option>
+                    <option value="400">400 ms (slow piezo)</option>
+                </select>
+            </label>
+        </div>
+
+        <div id="status">Ready</div>
+
+        <div id="result"></div>
+    </section>
+
+    <section id="view-diag" class="view" role="tabpanel" aria-label="Diagnostics">
+        <div class="controls">
+            <button id="checksBtn">Run checks</button>
+        </div>
+        <div id="checks" class="checks" aria-live="polite"></div>
+        <div class="controls">
+            <button id="selfBtn">Self-test</button>
+        </div>
+        <div class="selfnote">Self-test checks the decoder without a mic and plays a fixed demo frame through the speaker. A second device can listen; only its result tests the acoustic path. To send your own message, use the Try it tab.</div>
+
+        <div class="waterfall-wrap" id="waterfallWrap">
+            <canvas id="waterfall"></canvas>
+        </div>
+        <div class="indicator">
+            <span id="freqLabel">&mdash;</span>
+            <span id="nibbleLabel">&mdash;</span>
+            <span id="confLabel">&mdash;</span>
+        </div>
+
+        <div id="decoded-output"><span class="cursor">&#9612;</span></div>
+        <div id="nibble-log"></div>
+
+        <div class="report">
+            <div class="controls">
+                <button id="reportBtn">Copy diagnostics report</button>
+            </div>
+            <div id="reportStatus" class="report-status"></div>
+            <textarea id="reportText" rows="8" readonly placeholder="Press the button: builds a paste-ready issue report and copies it."></textarea>
+        </div>
+    </section>
+
+    <footer class="site-footer">
+        <small>&copy; TIKOCI &mdash; enbeep live decoder (MFSK-16 over Web Audio)</small>
+        <small>Not affiliated with or endorsed by <a href="https://mikrotik.com" target="_blank" rel="noopener">MikroTik</a>. All trademarks are property of their respective owners.</small>
     </footer>
 
 <script>
@@ -194,7 +481,9 @@
 /* enbeep live v2 decoder.
  * Frame: PRE(2s sync + 16-tone sweep) · SEP(1s) · LEN+payload+FLETCHER16 · END(1s)
  * Slot-counting (timestamp-based): repeat-nibble safe. Sweep calibrates offset.
- * Mirrors src/frame.ts. Syncs are the only delimiters (no SOF/EOF tones).
+ * Mirrors src/frame.ts, including slot-0 erasure repair for slow-piezo
+ * hardware (masked sweep tone 0 / data slot 0). Syncs are the only
+ * delimiters (no SOF/EOF tones).
  */
 
     // --- Configuration (matches RouterOS encoder) ---
@@ -245,6 +534,9 @@
     let slotT0 = 0;
     let slots = [];
     let sweepOffset = 0;
+    // Slot-0 repair flags for this frame attempt (slow-piezo hardware).
+    let sweepDropout = false;
+    let dataErasure = false;
 
     // Adaptive noise floor: 10th percentile of recent broadband level.
     // Absolute floors can't span USB mics (-24 dB signals) and phone
@@ -268,12 +560,37 @@
 
     // Decoded data
     let frameCount = 0;
+    // Last completed frame verdict, for the deterministic test surface.
+    let lastVerdict = null;
+    // Session history for the diagnostics report (capped, FIFO).
+    const frameLog = [];
+    const diagLog = [];
+    // Drop-reason histogram for this listening session.
+    const dropCounts = {};
+    // Previous session, stashed on reset so a retry, Self-test, or Run
+    // checks doesn't erase the evidence: buildReport keeps it across one
+    // reset. Copy the report before a second reset.
+    let prevFrameLog = [];
+    let prevDropCounts = {};
+    // Triage-checks runner state.
+    let checksRunning = false;
+    let checkResults = [];
+    // Last enumerateDevices audioinput count (-1 = unknown yet).
+    let knownMics = -1;
 
     // --- DOM ---
     const startBtn  = document.getElementById('startBtn');
     const selfBtn   = document.getElementById('selfBtn');
     const micSel    = document.getElementById('micSel');
     const symSel    = document.getElementById('symSel');
+    const tryMsg    = document.getElementById('tryMsg');
+    const playBtn   = document.getElementById('playBtn');
+    const tryMeta   = document.getElementById('tryMeta');
+    const tryErr    = document.getElementById('tryErr');
+    const rosDry    = document.getElementById('rosDry');
+    const rosLive   = document.getElementById('rosLive');
+    const copyDry   = document.getElementById('copyDry');
+    const copyLive  = document.getElementById('copyLive');
     const statusEl  = document.getElementById('status');
     const canvas    = document.getElementById('waterfall');
     const wfWrap    = document.getElementById('waterfallWrap');
@@ -283,6 +600,17 @@
     const resultEl  = document.getElementById('result');
     const outputEl  = document.getElementById('decoded-output');
     const logEl     = document.getElementById('nibble-log');
+    const tabTry    = document.getElementById('tabTry');
+    const tabDecode = document.getElementById('tabDecode');
+    const tabDiag   = document.getElementById('tabDiag');
+    const viewTry    = document.getElementById('view-try');
+    const viewDecode = document.getElementById('view-decode');
+    const viewDiag  = document.getElementById('view-diag');
+    const reportBtn = document.getElementById('reportBtn');
+    const reportStatus = document.getElementById('reportStatus');
+    const reportText = document.getElementById('reportText');
+    const checksBtn = document.getElementById('checksBtn');
+    const checksEl = document.getElementById('checks');
     const gfx       = canvas.getContext('2d');
 
     // --- Canvas setup ---
@@ -338,6 +666,15 @@
     // --- Audio ---
     startBtn.addEventListener('click', toggleListening);
     selfBtn.addEventListener('click', playSelfTest);
+    playBtn.addEventListener('click', playMessage);
+    tryMsg.addEventListener('input', refreshTryMeta);
+    copyDry.addEventListener('click', () => copyCmd('rosDry', copyDry));
+    copyLive.addEventListener('click', () => copyCmd('rosLive', copyLive));
+    tabTry.addEventListener('click', () => switchView('try'));
+    tabDecode.addEventListener('click', () => switchView('decode'));
+    tabDiag.addEventListener('click', () => switchView('diag'));
+    reportBtn.addEventListener('click', copyReport);
+    checksBtn.addEventListener('click', runChecks);
 
     async function toggleListening() {
         if (state !== S.IDLE) { stopListening(); return; }
@@ -375,19 +712,28 @@
             refreshMicList(); // labels now available
             requestAnimationFrame(tick);
         } catch (err) {
-            setStatus('Mic error: ' + err.message, 'error');
+            const msg = err && err.message ? err.message : String(err);
+            const nm = err && err.name ? err.name : '';
+            setStatus('Mic error: ' + msg, 'error');
+            log('err', '  mic start failed' + (nm ? ' (' + nm + ')' : '') + ': ' + micGuidance(nm));
         }
     }
 
     function resetDecode() {
+        stashSession();
         state = S.LISTENING;
         syncRunStart = -1;
         lastSyncTs = -1;
         slots = [];
         sweepOffset = 0;
+        sweepDropout = false;
+        dataErasure = false;
         floorDb = C.noiseFloor;
         floorHist.length = 0;
         frameCount = 0;
+        frameLog.length = 0;
+        diagLog.length = 0;
+        for (const k in dropCounts) delete dropCounts[k];
         symMs = Number(symSel.value) || 200;
         resultEl.className = '';
         resultEl.innerHTML = '';
@@ -457,15 +803,7 @@
         const loud = Math.max(syncPeak, dataPeak) > threshDb;
         const isSync = loud && syncPeak >= dataPeak;
 
-        // Sync-run tracking: gaps < 120 ms don't break the run (marginal
-        // SNR flickers isSync frame to frame; any-miss reset never locks).
-        if (isSync) {
-            if (syncRunStart < 0) syncRunStart = ts;
-            lastSyncTs = ts;
-        }
-        if (syncRunStart >= 0 && ts - lastSyncTs >= SYNC_GAP_MS) syncRunStart = -1;
-        const syncRunMs = syncRunStart >= 0 ? ts - syncRunStart : 0;
-        const syncNow = isSync || (syncRunStart >= 0 && ts - lastSyncTs < SYNC_GAP_MS);
+        const [syncNow, syncRunMs] = trackSync(ts, isSync);
 
         processFrame(ts, isSync, syncNow, syncRunMs, dataPeakFreq, dataPeak, threshDb);
 
@@ -496,6 +834,20 @@
         }
 
         requestAnimationFrame(tick);
+    }
+
+    // Sync-run tracking: gaps < 120 ms don't break the run (marginal
+    // SNR flickers isSync frame to frame; any-miss reset never locks).
+    // Shared by the mic loop and the deterministic test feed.
+    function trackSync(ts, isSync) {
+        if (isSync) {
+            if (syncRunStart < 0) syncRunStart = ts;
+            lastSyncTs = ts;
+        }
+        if (syncRunStart >= 0 && ts - lastSyncTs >= SYNC_GAP_MS) syncRunStart = -1;
+        const syncRunMs = syncRunStart >= 0 ? ts - syncRunStart : 0;
+        const syncNow = isSync || (syncRunStart >= 0 && ts - lastSyncTs < SYNC_GAP_MS);
+        return [syncNow, syncRunMs];
     }
 
     // --- Decode state machine (timestamp slot-counting; repeat-nibble safe) ---
@@ -579,11 +931,18 @@
     }
 
     function finishSweep(ts) {
-        if (slots.length < C.sweepTones) return failFrame('short sweep');
+        // Full 16-tone sweep, or a 15-tone dropout: on slow-piezo hardware
+        // the PRE ring masks sweep slot 0, which merges into the preamble
+        // run. Survivors must read exactly 1..15 (mirrors src/frame.ts).
+        const want = slots.length === C.sweepTones ? 16
+            : slots.length === C.sweepTones - 1 ? 15 : 0;
+        if (!want) return failFrame('short sweep');
+        const firstNib = want === 15 ? 1 : 0;
         const offs = [];
-        for (let n = 0; n < C.sweepTones; n++) {
-            if (!slots[n] || !slots[n].freqs.length) return failFrame('sweep gap @' + n);
-            const f = slotMedian(slots[n]);
+        for (let n = firstNib; n < C.sweepTones; n++) {
+            const s = slots[n - firstNib];
+            if (!s || !s.freqs.length) return failFrame('sweep gap @' + n);
+            const f = slotMedian(s);
             const nib = Math.round((f - C.baseFreq) / C.step);
             if (nib !== n) {
                 return failFrame('sweep mismatch @' + n + ' (got ' + Math.round(f) + ' Hz)');
@@ -593,55 +952,132 @@
         offs.sort((x, y) => x - y);
         sweepOffset = offs.length % 2 ? offs[(offs.length - 1) / 2]
             : (offs[offs.length / 2 - 1] + offs[offs.length / 2]) / 2;
+        sweepDropout = want === 15;
         state = S.SEPDATA;
         slotT0 = ts;
-        log('ok', '  sweep 0–15 ✓ offset ' + f1hz(sweepOffset) + ' Hz');
+        log('ok', '  sweep ' + (sweepDropout ? '1–15 (slot-0 masked) ✓' : '0–15 ✓')
+            + ' offset ' + f1hz(sweepOffset) + ' Hz');
+    }
+
+    function repairTag() {
+        if (sweepDropout && dataErasure) return ' · slot-0 repair (sweep+data)';
+        if (sweepDropout) return ' · slot-0 repair (sweep)';
+        if (dataErasure) return ' · slot-0 repair (data)';
+        return '';
     }
 
     function finishData(dataEndTs) {
         const nSlots = Math.round((dataEndTs - slotT0) / symMs);
-        if (nSlots < 6 || nSlots % 2 !== 0) {
+        const minTones = nSlots % 2 === 1 ? 5 : 6;
+        if (nSlots < minTones) {
             return failFrame('bad data length (' + nSlots + ' tones)');
         }
-        const nibbles = [];
-        const dfs = [];
+        const frqs = [];
         for (let i = 0; i < nSlots; i++) {
             const s = slots[i];
             if (!s || !s.freqs.length) return failFrame('data gap @tone ' + i);
-            const f = slotMedian(s);
-            const nib = Math.round((f - sweepOffset - C.baseFreq) / C.step);
-            if (nib < 0 || nib > 15) return failFrame('tone outside band @' + i);
-            nibbles.push(nib);
-            dfs.push(f - sweepOffset - (C.baseFreq + nib * C.step));
+            frqs.push(slotMedian(s));
         }
-        const maxDf = Math.max(...dfs.map(Math.abs));
-        const bytes = [];
-        for (let i = 0; i < nibbles.length; i += 2) bytes.push(nibbles[i] * 16 + nibbles[i + 1]);
-        const len = bytes[0];
-        if (bytes.length !== len + 3) return failFrame('len ' + len + ' vs ' + bytes.length + ' bytes');
-        const payload = bytes.slice(1, 1 + len);
-        const got = bytes.slice(1 + len);
-        const [e1, e2] = fletcher16([len, ...payload]);
-        frameCount++;
-        if (got[0] === e1 && got[1] === e2) {
-            showResult(true, payload, maxDf, '');
-            log('ok', '  frame #' + frameCount + ': ' + payload.length + ' bytes, fletcher ✓');
-            setStatus('Frame verified ✓ — listening…', 'done');
-            postFrame({ ok: true, payload, offsetHz: sweepOffset, maxDfHz: maxDf, symMs });
-        } else {
-            showResult(false, payload, maxDf, 'fletcher mismatch');
-            log('err', '  frame #' + frameCount + ': CHECKSUM FAIL');
-            setStatus('Checksum failed — listening…', 'error');
-            postFrame({ ok: false, error: 'fletcher mismatch', payload, symMs });
+        const toNib = (f) => {
+            const n = Math.round((f - sweepOffset - C.baseFreq) / C.step);
+            return Math.max(0, Math.min(15, n));
+        };
+        // Pure verify over a nibble sequence (mirrors src/frame.ts): band
+        // margin, byte count, Fletcher-16 — no side effects, so a failed
+        // straddle attempt is discarded and the original verdict stands.
+        const verifyLive = (nibs, fs) => {
+            const dfs = fs.map((f, i) => f - sweepOffset - (C.baseFreq + nibs[i] * C.step));
+            const maxDf = Math.max(...dfs.map(Math.abs));
+            for (let i = 0; i < dfs.length; i++) {
+                if (Math.abs(dfs[i]) > C.tolerance) {
+                    return { ok: false, kind: 'margin', firstBad: i, maxDf };
+                }
+            }
+            const bytes = [];
+            for (let i = 0; i < nibs.length; i += 2) bytes.push(nibs[i] * 16 + nibs[i + 1]);
+            const len = bytes[0];
+            if (bytes.length !== len + 3) {
+                return { ok: false, kind: 'count', len, count: bytes.length, maxDf };
+            }
+            const payload = bytes.slice(1, 1 + len);
+            const got = bytes.slice(1 + len);
+            const [e1, e2] = fletcher16([len, ...payload]);
+            if (got[0] === e1 && got[1] === e2) {
+                return { ok: true, payload, maxDf, len };
+            }
+            return { ok: false, kind: 'fletcher', payload, maxDf, len };
+        };
+        // Structural repair for a masked data slot 0 (mirrors
+        // src/frame.ts): frame size forces LEN, the missing nibble is
+        // reconstructed, and Fletcher-16 must still verify. Returns the
+        // repaired verdict, or null when structurally impossible.
+        const repairLive = (sNibs, sFrqs) => {
+            const nB = (sNibs.length + 1) / 2;
+            if (!Number.isInteger(nB)) return null;
+            const wantLen = nB - 3;
+            const lo = sNibs[0];
+            if (lo === undefined || lo < 0) return null;
+            const hi = (wantLen - lo) / 16;
+            if (!Number.isInteger(hi) || hi < 0 || hi > 15) return null;
+            // Synthetic slot 0 at its assigned center: df 0 by
+            // construction, checksum-guarded like the offline decoder's.
+            return verifyLive([hi, ...sNibs],
+                [sweepOffset + C.baseFreq + hi * C.step, ...sFrqs]);
+        };
+        const terminal = (v, erased) => {
+            if (!v.ok && v.kind !== 'fletcher') {
+                return failFrame(v.kind === 'margin'
+                    ? 'tone outside band @' + v.firstBad
+                    : 'len ' + v.len + ' vs ' + v.count + ' bytes');
+            }
+            dataErasure = erased;
+            frameCount++;
+            if (v.ok) {
+                showResult(true, v.payload, v.maxDf, '');
+                log('ok', '  frame #' + frameCount + ': ' + v.payload.length
+                    + ' bytes, fletcher ✓' + repairTag());
+                setStatus('Frame verified ✓ — listening…', 'done');
+                postFrame({ ok: true, payload: v.payload, offsetHz: sweepOffset,
+                    maxDfHz: v.maxDf, symMs, sweepDropout, dataErasure });
+            } else {
+                showResult(false, v.payload, v.maxDf, 'fletcher mismatch');
+                log('err', '  frame #' + frameCount + ': CHECKSUM FAIL' + repairTag());
+                setStatus('Checksum failed — listening…', 'error');
+                postFrame({ ok: false, error: 'fletcher mismatch', payload: v.payload,
+                    symMs, sweepDropout, dataErasure });
+            }
+            state = S.LISTENING;
+            syncRunStart = -1;
+            lastSyncTs = -1;
+            slots = [];
+            blindUntil = performance.now() + 1500; // swallow the END tail
+        };
+        const nibbles = frqs.map(toNib);
+        if (nSlots % 2 === 1) {
+            // Odd window: post-SEP masking ate data slot 0 (LEN hi-nibble);
+            // the measured tones are played tones 1..n.
+            const r = repairLive(nibbles, frqs);
+            if (r) return terminal(r, true);
+            return failFrame('erasure unrecoverable (' + nSlots + ' tones)');
         }
-        state = S.LISTENING;
-        syncRunStart = -1;
-        lastSyncTs = -1;
-        slots = [];
-        blindUntil = performance.now() + 1500; // swallow the END tail
+        const v = verifyLive(nibbles, frqs);
+        if (!v.ok && v.kind === 'count' && v.maxDf <= 25 && nibbles.length >= 6) {
+            // Rounding straddle (mirrors src/frame.ts): confident tones but
+            // an impossible LEN — reinterpret as an erasure. Adopted only
+            // on success; failure keeps the original byte-count verdict.
+            const r = repairLive(nibbles.slice(0, -1), frqs.slice(0, -1));
+            if (r && r.ok) return terminal(r, true);
+        }
+        return terminal(v, false);
     }
 
     function failFrame(why) {
+        lastVerdict = { ok: false, error: why };
+        noteDrop(why);
+        frameLog.push({ t: Date.now(), ok: false, error: why, symMs });
+        if (frameLog.length > 20) frameLog.shift();
+        sweepDropout = false;
+        dataErasure = false;
         log('err', '  frame dropped: ' + why);
         setStatus('Listening — ' + why, 'error');
         postFrame({ ok: false, error: why, symMs });
@@ -654,7 +1090,7 @@
     // Best-effort result upload for instrumented trials (see serve.ts).
     function postFrame(row) {
         try {
-            fetch('/api/frame', {
+            fetch('api/frame', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ...row, ua: navigator.userAgent }),
@@ -683,12 +1119,23 @@
 
     // --- Result card ---
     function showResult(ok, payload, maxDf, err) {
+        lastVerdict = { ok, payload: [...payload], maxDf, error: err || null,
+            sweepDropout, dataErasure };
+        frameLog.push({ t: Date.now(), ok, payload: [...payload], maxDf,
+            error: err || null, symMs, offsetHz: sweepOffset,
+            sweepDropout, dataErasure });
+        if (frameLog.length > 20) frameLog.shift();
         let main;
         if (payload.length === 11) {
+            // The wire format has no type tag: an 11-byte payload is shown
+            // as an announce by convention, plus its text reading so an
+            // 11-byte message is never presented as MAC/IP only.
             const mac = payload.slice(0, 6).map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(':');
             const ip = payload.slice(6, 10).join('.');
+            const ascii = payload.map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '·').join('');
             main = '<div class="rline">' + escapeHtml(mac) + '</div>' +
-                   '<div class="rline">' + escapeHtml(ip) + ' &nbsp;cpu ' + payload[10] + '</div>';
+                   '<div class="rline">' + escapeHtml(ip) + ' &nbsp;cpu ' + payload[10] + '</div>' +
+                   '<div class="rline textline">as text: "' + escapeHtml(ascii) + '"</div>';
         } else {
             const hex = payload.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
             const ascii = payload.map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '·').join('');
@@ -699,7 +1146,7 @@
         resultEl.innerHTML =
             '<span class="tick">' + (ok ? '✓' : '✗') + '</span> ' + main +
             '<div class="rmeta">' + symMs + ' ms/sym · offset ' + f1hz(sweepOffset) +
-            ' Hz · max|df| ' + maxDf.toFixed(0) + ' Hz' + (err ? ' · ' + escapeHtml(err) : '') + '</div>';
+            ' Hz · max|df| ' + maxDf.toFixed(0) + ' Hz' + repairTag() + (err ? ' · ' + escapeHtml(err) : '') + '</div>';
         outputEl.textContent = payload.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
     }
 
@@ -707,6 +1154,7 @@
     const SCROLL = 2;
 
     function drawWaterfall(binHz) {
+        if (!(canvasW > SCROLL)) return; // diag tab hidden: canvas has no size
         const img = gfx.getImageData(SCROLL, 0, canvasW - SCROLL, canvasH);
         gfx.putImageData(img, 0, 0);
 
@@ -803,17 +1251,28 @@
         const startedForTest = (state === S.IDLE);
         if (startedForTest) startSelfTest();
 
+        // twin1 ground-truth payload (same as unit tests)
+        await playTones(tonesForFrame([2, 65, 170, 107, 44, 179, 10, 0, 2, 15, 0], symMs));
+
+        selfBtn.disabled = false;
+        selfBtn.textContent = 'Self-test';
+
+        if (startedForTest) {
+            stopListening();
+        }
+    }
+
+    // Schedule a tone plan on the audio clock and wait it out. Shared by
+    // Self-test (fixed demo payload) and the Try-tab sender (user message).
+    // Sample-accurate scheduling: sleep()-based pacing drifts ~7 ms/tone,
+    // stretching 28 tones to 29 slots.
+    async function playTones(tones) {
         const ctx = audioCtx;
         const gain = ctx.createGain();
         gain.gain.value = 0.3;
         gain.connect(ctx.destination);
         gain.connect(analyser);
 
-        // twin1 ground-truth payload (same as unit tests)
-        const tones = tonesForFrame([2, 65, 170, 107, 44, 179, 10, 0, 2, 15, 0], symMs);
-
-        // Sample-accurate scheduling on the audio clock: sleep()-based
-        // pacing drifts ~7 ms/tone, stretching 28 tones to 29 slots.
         let t = ctx.currentTime + 0.05;
         for (const [freq, ms] of tones) {
             const osc = ctx.createOscillator();
@@ -829,12 +1288,70 @@
         // Wait out the frame, then let the END sync register before teardown
         await sleep((t - ctx.currentTime) * 1000 + 1200);
         gain.disconnect();
-        selfBtn.disabled = false;
-        selfBtn.textContent = 'Self-test';
+    }
+
+    // --- Try-tab message sender ---
+    // Same v2 framing as the router; the message is raw UTF-8 bytes, 1..255
+    // per the SPEC (LEN is one byte). Pure: also unit-tested via __enbeep.
+    function encodeMessage(text) {
+        const bytes = Array.from(new TextEncoder().encode(text));
+        if (!bytes.length) return { ok: false, error: 'Type a message first (1–255 bytes).' };
+        if (bytes.length > 255) return { ok: false, error: 'Too long: ' + bytes.length + ' bytes (max 255).' };
+        return { ok: true, bytes };
+    }
+
+    function frameSeconds(len, sym) {
+        return (4000 + 16 * sym + (len + 3) * 2 * sym) / 1000;
+    }
+
+    async function playMessage() {
+        if (playBtn.disabled) return;
+        const enc = encodeMessage(tryMsg.value);
+        if (!enc.ok) {
+            tryErr.textContent = enc.error;
+            return;
+        }
+        tryErr.textContent = '';
+        playBtn.disabled = true;
+        playBtn.textContent = 'Playing…';
+
+        const startedForTest = (state === S.IDLE);
+        if (startedForTest) startSelfTest();
+
+        await playTones(tonesForFrame(enc.bytes, symMs));
+
+        playBtn.disabled = false;
+        playBtn.textContent = 'Play message';
 
         if (startedForTest) {
             stopListening();
         }
+    }
+
+    // Byte count + air time under the sender, plus the RouterOS command
+    // preview: only plain printable text survives a RouterOS "..." literal.
+    function refreshTryMeta() {
+        const n = new TextEncoder().encode(tryMsg.value).length;
+        const sym = Number(symSel.value) || 200;
+        tryMeta.textContent = n + ' bytes · ~' + Math.round(frameSeconds(n, sym))
+            + ' s on air @ ' + sym + ' ms';
+        const t = tryMsg.value;
+        const plain = t.length > 0 && t.length <= 64 && /^[\x20-\x7E]+$/.test(t) && !/["$`\\]/.test(t);
+        const shown = plain ? t : 'Hello';
+        rosDry.textContent = '$enbeepText "' + shown + '" 200ms 200ms yes';
+        rosLive.textContent = '$enbeepText "' + shown + '" 200ms 200ms no';
+    }
+
+    async function copyCmd(id, btn) {
+        const el = document.getElementById(id);
+        const label = btn.textContent;
+        try {
+            await navigator.clipboard.writeText(el.textContent);
+            btn.textContent = 'Copied ✓';
+        } catch (e) {
+            btn.textContent = 'Select + copy';
+        }
+        setTimeout(() => { btn.textContent = label; }, 1500);
     }
 
     function startSelfTest() {
@@ -882,7 +1399,24 @@
         }
     }
 
+    // Tab switch: purely presentational, never touches decode state —
+    // except re-sizing the canvas, which has no size while hidden.
+    function switchView(which) {
+        tabTry.classList.toggle('active', which === 'try');
+        tabDecode.classList.toggle('active', which === 'decode');
+        tabDiag.classList.toggle('active', which === 'diag');
+        tabTry.setAttribute('aria-selected', String(which === 'try'));
+        tabDecode.setAttribute('aria-selected', String(which === 'decode'));
+        tabDiag.setAttribute('aria-selected', String(which === 'diag'));
+        viewTry.classList.toggle('active', which === 'try');
+        viewDecode.classList.toggle('active', which === 'decode');
+        viewDiag.classList.toggle('active', which === 'diag');
+        if (which === 'diag') setupCanvas();
+    }
+
     function log(type, msg) {
+        diagLog.push([type, msg]);
+        if (diagLog.length > 100) diagLog.shift();
         const div = document.createElement('div');
         div.className = 'log-' + type;
         div.textContent = msg;
@@ -890,9 +1424,327 @@
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    // Small test surface (used by the harness smoke test only)
-    window.__enbeep = { fletcher16, tonesForFrame, freqToNibble, C,
-        _selftest: { startSelfTest, stopListening } };
+    // --- Triage helpers ---
+    // Normalize a drop reason to a histogram key (stable across slot
+    // indices and measured values).
+    function noteDrop(why) {
+        const prefixes = [
+            'sweep mismatch', 'sweep gap', 'short sweep', 'sweep timeout',
+            'SEP timeout', 'expected SEP', 'data timeout', 'bad data length',
+            'data gap', 'tone outside band', 'erasure unrecoverable',
+        ];
+        let key = 'other';
+        for (const p of prefixes) {
+            if (why.startsWith(p)) { key = p; break; }
+        }
+        if (key === 'other' && why.startsWith('len ')) key = 'byte count';
+        if (!(key in dropCounts) && Object.keys(dropCounts).length >= 12) key = 'other';
+        dropCounts[key] = (dropCounts[key] || 0) + 1;
+    }
+
+    // One-line fix for a mic failure, by error name.
+    function micGuidance(name) {
+        switch (name) {
+            case 'NotAllowedError':
+                return 'Mic permission denied: allow the mic in the address bar, then reload and Start again.';
+            case 'NotFoundError':
+            case 'OverconstrainedError':
+                return 'No mic found: connect or enable an input device, then pick it in the Microphone box.';
+            case 'NotReadableError':
+            case 'AbortError':
+                return 'Mic is busy (another app, or OS privacy settings): free it up and try again.';
+            case 'SecurityError':
+                return 'Mic needs a secure context: use the Pages build (HTTPS) or serve:tls on LAN.';
+            case 'TypeError':
+                return 'No mic API in this browser/context: try a current browser over HTTPS or localhost.';
+            default:
+                return 'Mic failed — Run checks in Diagnostics for details.';
+        }
+    }
+
+    // --- Diagnostics report ---
+    // Markdown sized for pasting into a capture-report issue
+    // (.github/ISSUE_TEMPLATE/capture-report.md): everything the page
+    // knows, plus fill-in lines for what only the human knows, so an
+    // agent can triage the pasted report without follow-up questions.
+    function payloadText(payload) {
+        const hex = (b) => b.toString(16).toUpperCase().padStart(2, '0');
+        const ascii = payload.map((b) => (b >= 32 && b < 127) ? String.fromCharCode(b) : '·').join('');
+        if (payload.length === 11) {
+            return payload.slice(0, 6).map(hex).join(':') + ' '
+                + payload.slice(6, 10).join('.') + ' cpu ' + payload[10]
+                + ' · as text "' + ascii + '"';
+        }
+        return payload.map(hex).join(' ') + ' · as text "' + ascii + '"';
+    }
+
+    function verdictLine(f) {
+        const t = new Date(f.t).toISOString().slice(11, 19);
+        if (f.ok) {
+            return '- [' + t + '] ✓ ' + payloadText(f.payload)
+                + ' · sym ' + f.symMs + 'ms · offset ' + f1hz(f.offsetHz)
+                + ' Hz · maxDf ' + f.maxDf.toFixed(0) + ' Hz · repair ' + repairName(f);
+        }
+        return '- [' + t + '] ✗ ' + f.error + ' · sym ' + f.symMs + 'ms';
+    }
+
+    function stashSession() {
+        if (!frameLog.length && !Object.keys(dropCounts).length) return;
+        prevFrameLog = frameLog.map((f) => ({ ...f, payload: f.payload ? [...f.payload] : f.payload }));
+        prevDropCounts = { ...dropCounts };
+    }
+
+    function repairName(f) {
+        if (f.sweepDropout && f.dataErasure) return 'sweep+data';
+        if (f.sweepDropout) return 'sweep';
+        if (f.dataErasure) return 'data';
+        return 'none';
+    }
+
+    function micLabel() {
+        try {
+            const o = micSel.options;
+            const idx = micSel.selectedIndex;
+            if (o && typeof idx === 'number' && idx > 0 && o[idx] && o[idx].text) {
+                return o[idx].text;
+            }
+        } catch (e) { /* option list unavailable; fall through */ }
+        return 'Default input';
+    }
+
+    function buildReport() {
+        const lines = [];
+        const secure = typeof window === 'undefined' ? null
+            : (typeof window.isSecureContext === 'boolean' ? window.isSecureContext : null);
+        const proto = typeof location === 'undefined' ? null : location.protocol;
+        lines.push('## enbeep live diagnostics — ' + new Date().toISOString());
+        lines.push('');
+        lines.push('- page: ' + (typeof location === 'undefined' ? '(harness)' : location.href));
+        lines.push('- browser: ' + (navigator.userAgent || '(unknown)'));
+        lines.push('- secure: ' + (secure === null ? 'unknown'
+            : (secure ? 'yes (' + proto + ')' : 'NO (' + proto + ' — mic will fail)')));
+        lines.push('- mic: ' + micLabel() + ' (' + micState() + ') · inputs seen: '
+            + (knownMics < 0 ? 'unknown' : knownMics));
+        lines.push('- audio: ' + (audioCtx
+            ? (audioCtx.sampleRate + ' Hz · ' + audioCtx.state)
+            : 'none (start listening or run checks)'));
+        lines.push('- sym: ' + symMs + ' ms · noise floor: ' + floorDb.toFixed(0) + ' dB');
+        lines.push('- frames attempted: ' + frameLog.length
+            + ' · verified: ' + frameLog.filter((f) => f.ok).length);
+        lines.push('- counts above cover the most recent 20 verdicts, including synthetic checks');
+        lines.push('');
+        const dropKeys = Object.keys(dropCounts).sort();
+        lines.push('### drop reasons (' + dropKeys.length + ')');
+        if (!dropKeys.length) lines.push('(none yet)');
+        for (const k of dropKeys) lines.push('- ' + k + ' ×' + dropCounts[k]);
+        lines.push('');
+        lines.push('### frame verdicts (' + frameLog.length + ')');
+        if (!frameLog.length) lines.push('(none yet — listen for a frame first)');
+        for (const f of frameLog) lines.push(verdictLine(f));
+        lines.push('');
+        if (prevFrameLog.length) {
+            lines.push('### previous session (' + prevFrameLog.length + ', kept across one reset)');
+            for (const f of prevFrameLog) lines.push(verdictLine(f));
+            const pk = Object.keys(prevDropCounts).sort();
+            if (pk.length) {
+                lines.push('drops: ' + pk.map((k) => k + ' ×' + prevDropCounts[k]).join(', '));
+            }
+            lines.push('');
+        }
+        const tail = diagLog.slice(-30);
+        lines.push('### log tail (last ' + tail.length + ')');
+        for (const [type, msg] of tail) lines.push('  [' + type + '] ' + msg);
+        lines.push('');
+        lines.push('### still needed for the issue (fill in by hand)');
+        lines.push('- Sender: Router model / RouterOS version / enclosure, or speaker device / browser:');
+        lines.push('- Command used (interface, row, sym, tone, dry):');
+        lines.push('- Mic distance / room:');
+        lines.push('- WAV attached? (lab addressing? trimmed for samples/?)');
+        return lines.join('\n');
+    }
+
+    async function copyReport() {
+        const text = buildReport();
+        reportText.value = text;
+        try {
+            await navigator.clipboard.writeText(text);
+            reportStatus.textContent = 'Copied ✓ — paste into the GitHub issue ('
+                + text.split('\n').length + ' lines)';
+        } catch (e) {
+            reportText.focus();
+            reportText.select();
+            reportStatus.textContent = 'Clipboard blocked — report is below, select-all + copy it manually.';
+        }
+    }
+
+    // --- Triage checks ---
+    // Guided sequence for "it doesn't work": environment, audio output
+    // path, mic input path (permission + live levels), then a synth
+    // decode. Requires IDLE so the mic probe and synth own the audio
+    // hardware alone. Real-browser only (needs AudioContext + mic).
+    function renderChecks(rows) {
+        checksEl.innerHTML = '';
+        for (const r of rows) {
+            const div = document.createElement('div');
+            div.className = 'check ' + (r.ok ? 'ok' : 'bad');
+            div.textContent = (r.ok ? '✓ ' : '✗ ') + r.name + ' — ' + r.detail;
+            checksEl.appendChild(div);
+        }
+        if (checksRunning) {
+            const div = document.createElement('div');
+            div.className = 'check';
+            div.textContent = '… running';
+            checksEl.appendChild(div);
+        }
+    }
+
+    async function runChecks() {
+        if (checksRunning) return;
+        if (state !== S.IDLE) {
+            checkResults = [{ name: 'pre', ok: false, detail: 'Stop listening, then run checks.' }];
+            renderChecks(checkResults);
+            return;
+        }
+        checksRunning = true;
+        checkResults = [];
+        renderChecks(checkResults);
+        const push = (name, ok, detail) => {
+            checkResults.push({ name, ok, detail });
+            renderChecks(checkResults);
+        };
+        const secure = typeof window.isSecureContext === 'boolean' ? window.isSecureContext : true;
+        push('context', secure, location.protocol + '//' + location.host
+            + (secure ? ' · secure context' : ' · INSECURE — mic will fail'));
+        let AC = null;
+        try {
+            AC = new (window.AudioContext || window.webkitAudioContext)();
+            if (AC.state === 'suspended') {
+                try { await AC.resume(); } catch (e) { /* stays suspended */ }
+            }
+            const lat = AC.outputLatency ?? AC.baseLatency;
+            push('audio', AC.state === 'running',
+                AC.sampleRate + ' Hz · ' + AC.state
+                + (typeof lat === 'number' ? ' · ' + Math.round(lat * 1000) + ' ms' : '')
+                + (AC.state === 'running' ? '' : ' (could not start)'));
+        } catch (e) {
+            push('audio', false, 'AudioContext failed: ' + (e && e.message ? e.message : e));
+        }
+        try {
+            const devs = await navigator.mediaDevices.enumerateDevices();
+            knownMics = devs.filter((d) => d.kind === 'audioinput').length;
+        } catch (e) { knownMics = -1; }
+        let stream = null;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: {
+                echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+            } });
+            const track = stream.getAudioTracks()[0];
+            const label = (track && track.label) || 'unlabelled input';
+            const actx = AC || new (window.AudioContext || window.webkitAudioContext)();
+            const src = actx.createMediaStreamSource(stream);
+            const an = actx.createAnalyser();
+            an.fftSize = 2048;
+            src.connect(an);
+            const buf = new Float32Array(an.frequencyBinCount);
+            let peak = -Infinity;
+            const t0 = performance.now();
+            while (performance.now() - t0 < 1000) {
+                an.getFloatFrequencyData(buf);
+                for (let i = 0; i < buf.length; i++) {
+                    if (buf[i] > peak) peak = buf[i];
+                }
+                await sleep(50);
+            }
+            src.disconnect();
+            if (!AC) await actx.close().catch(() => {});
+            const db = peak === -Infinity ? '-inf' : peak.toFixed(0);
+            push('mic', peak > -90, label + ' · peak ' + db + ' dBFS in 1 s'
+                + (peak > -90 ? '' : ' (silent — wrong device or muted?)'));
+        } catch (e) {
+            const nm = (e && e.name) || '';
+            push('mic', false, (nm ? nm + ': ' : '') + micGuidance(nm));
+        } finally {
+            if (stream) stream.getTracks().forEach((t) => t.stop());
+        }
+        try {
+            await playSelfTest();
+            const v = lastVerdict;
+            push('synth', !!(v && v.ok), (v && v.ok)
+                ? ('verified ' + v.payload.length + ' bytes · maxDf ' + v.maxDf.toFixed(0) + ' Hz')
+                : ('rejected: ' + ((v && v.error) || 'no verdict')));
+        } catch (e) {
+            push('synth', false, 'self-test threw: ' + (e && e.message ? e.message : e));
+        }
+        if (AC) AC.close().catch(() => {});
+        checksRunning = false;
+        renderChecks(checkResults);
+    }
+
+    // --- Deterministic test surface ---
+    // test/live.test.ts drives the real state machine through _test (no
+    // mic, no audio clock); NS-7's headless check can reuse this hook.
+    function testReset(sym) {
+        stashSession();
+        state = S.LISTENING;
+        syncRunStart = -1;
+        lastSyncTs = -1;
+        blindUntil = 0;
+        slotT0 = 0;
+        slots = [];
+        sweepOffset = 0;
+        sweepDropout = false;
+        dataErasure = false;
+        symMs = sym;
+        symSel.value = String(sym);
+        frameCount = 0;
+        frameLog.length = 0;
+        diagLog.length = 0;
+        for (const k in dropCounts) delete dropCounts[k];
+        lastVerdict = null;
+    }
+
+    function testFeed(ts, isSync, peakFreq, peakDb, threshDb) {
+        const [syncNow, syncRunMs] = trackSync(ts, isSync);
+        processFrame(ts, isSync, syncNow, syncRunMs, peakFreq, peakDb, threshDb);
+    }
+
+    // Feed a whole tone plan as 60 fps classifier frames; return the first
+    // new verdict. Shared by test/live.test.ts and the headless smoke
+    // check so both drive identical code. fresh=false continues without
+    // reset (real between-frames behavior), so history accumulates.
+    function testFeedPlan(tones, sym, offsetHz, fresh) {
+        const threshDb = C.noiseFloor + C.snrDb;
+        const loudDb = threshDb + 25; // confident tone, mirrors air SNR
+        const quietDb = threshDb - 20; // data-band floor during sync
+        const before = fresh ? null : lastVerdict;
+        if (fresh) testReset(sym);
+        let end = 0;
+        let frame = 0;
+        const step = 1000 / 60;
+        for (const [freq, ms] of tones) {
+            end += ms;
+            const syncTone = freq >= 3900;
+            while (frame * step < end) {
+                const ts = frame * step;
+                if (syncTone) testFeed(ts, true, freq, quietDb, threshDb);
+                else testFeed(ts, false, freq + offsetHz, loudDb, threshDb);
+                frame++;
+                // A real consumer reacts to the first completed frame; later
+                // re-locks on the same feed are spurious by construction.
+                const v = lastVerdict;
+                if (v && v !== before) return v;
+            }
+        }
+        const fin = lastVerdict;
+        return fin === before ? null : fin;
+    }
+
+    // Test surface: pure helpers plus the state-machine driver.
+    window.__enbeep = { fletcher16, tonesForFrame, freqToNibble, encodeMessage, C,
+        _selftest: { startSelfTest, stopListening },
+        _test: { reset: testReset, feed: testFeed, verdict: () => lastVerdict,
+            report: buildReport, runPlan: testFeedPlan,
+            checks: () => ({ running: checksRunning, results: checkResults.map((r) => ({ ...r })) }) } };
 
     // Init
     document.addEventListener('visibilitychange', async () => {
@@ -906,7 +1758,8 @@
     });
     window.addEventListener('load', () => { setupCanvas(); refreshMicList(); });
     window.addEventListener('resize', () => { if (state !== S.IDLE) setupCanvas(); });
-    symSel.addEventListener('change', () => { symMs = Number(symSel.value) || 200; });
+    symSel.addEventListener('change', () => { symMs = Number(symSel.value) || 200; refreshTryMeta(); });
+    refreshTryMeta();
 </script>
 </body>
 </html>

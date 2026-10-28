@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>enbeep — WAV test harness</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0;
+         max-width: 640px; margin: 0 auto; padding: 1rem; min-height: 100dvh; }
+  h1 { font-size: 1.3rem; } .sub { color: #888; font-size: .85rem; }
+  a { color: #4a9eff; }
+  #drop { border: 2px dashed #444; border-radius: 8px; padding: 2rem 1rem;
+          text-align: center; color: #999; margin: 1rem 0; cursor: pointer; }
+  #drop.over { border-color: #4a9eff; color: #e0e0e0; }
+  label { font-size: .8rem; color: #888; }
+  select, button { background: #111; color: #e0e0e0; border: 1px solid #333;
+                   border-radius: 6px; padding: .5rem; font-size: .95rem; }
+  button { cursor: pointer; border-color: #4a9eff; color: #4a9eff; }
+  #verdict { font-family: monospace; border: 1px solid #333; border-radius: 8px;
+             padding: .9rem 1rem; margin: 1rem 0; display: none; white-space: pre-wrap; }
+  #verdict.ok { border-color: #00cc66; } #verdict.bad { border-color: #ff4a4a; }
+  pre { background: #111; border-radius: 6px; padding: .75rem; overflow: auto;
+        font-size: .75rem; max-height: 320px; }
+  footer { font-size: .75rem; color: #555; }
+</style>
+</head>
+<body>
+<header>
+  <h1>enbeep — WAV test harness</h1>
+  <div class="sub">Drop a recording of a frame; it is decoded locally in your
+  browser with the same codec as the offline CLI. Nothing is uploaded.
+  <a href="./index.html">Live mic decoder →</a></div>
+</header>
+
+<div id="drop">Drop a .wav file here, or click to choose one</div>
+<input id="file" type="file" accept=".wav,audio/wav" hidden>
+<label>Symbol length
+  <select id="sym">
+    <option value="100">100 ms</option>
+    <option value="200" selected>200 ms</option>
+    <option value="300">300 ms</option>
+    <option value="400">400 ms</option>
+  </select>
+</label>
+<button id="again" hidden>Decode</button>
+
+<div id="verdict"></div>
+<pre id="json" hidden></pre>
+
+<footer>
+  No router? Open the <a href="./index.html">live decoder</a>, Try it tab,
+  and press Play message (plays a frame for a second device to hear).
+  Frame spec: <a href="./SPEC.md">SPEC.md</a> ·
+  Encoder: <a href="./enbeep-frame.rsc">enbeep-frame.rsc</a>
+</footer>
+
+<script src="./wav-decode.js"></script>
+<script>
+'use strict';
+const drop = document.getElementById('drop');
+const fileEl = document.getElementById('file');
+const symEl = document.getElementById('sym');
+const verdict = document.getElementById('verdict');
+const jsonEl = document.getElementById('json');
+let lastBuf = null;
+
+drop.addEventListener('click', () => fileEl.click());
+fileEl.addEventListener('change', () => { if (fileEl.files[0]) load(fileEl.files[0]); });
+for (const ev of ['dragover', 'dragenter']) drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); });
+for (const ev of ['dragleave', 'drop']) drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); });
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) load(f); });
+symEl.addEventListener('change', () => { if (lastBuf) run(); });
+
+async function load(f) {
+  lastBuf = await f.arrayBuffer();
+  drop.textContent = f.name + ' (' + (f.size / 1048576).toFixed(1) + ' MB)';
+  run();
+}
+
+function run() {
+  if (typeof window.__enbeepDecode !== 'function') {
+    verdict.style.display = 'block'; verdict.className = 'bad';
+    verdict.textContent = '✗ wav-decode.js missing — build it with:\n  bun build web/wav-entry.ts --target browser --outfile wav-decode.js';
+    return;
+  }
+  let r;
+  try { r = window.__enbeepDecode(lastBuf, Number(symEl.value)); }
+  catch (e) { r = { ok: false, problems: [String(e && e.message || e)] }; }
+  verdict.style.display = 'block';
+  const verified = r.ok && r.sumOk;
+  verdict.className = r.ok ? 'ok' : 'bad';
+  let head = (verified ? '✓ VERIFIED' : r.ok ? 'CALIBRATION ONLY' : '✗ REJECTED') + ' — '
+    + (r.problems && r.problems.length ? r.problems.join('; ') : verified ? 'Fletcher-16 ok' : 'Sweep detected; no payload/checksum verified');
+  if (verified && Array.isArray(r.payload) && r.payload.length === 11) {
+    const mac = r.payload.slice(0, 6).map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(':');
+    const ip = r.payload.slice(6, 10).join('.');
+    head += '\n' + mac + '\n' + ip + '  cpu ' + r.payload[10] + '%';
+  }
+  verdict.textContent = head;
+  jsonEl.hidden = false;
+  jsonEl.textContent = JSON.stringify(r, null, 2);
+}
+</script>
+</body>
+</html>

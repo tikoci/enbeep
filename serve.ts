@@ -7,13 +7,25 @@
  *   PORT=8080 bun run serve  # override port
  *
  * For --tls, generates a self-signed cert on first run.
- * On iPhone, open https://<your-lan-ip>:3456 and accept the cert warning.
+ * Remote mic access requires a trusted secure context; self-signed
+ * certificates may need device-specific trust setup. Prefer trusted HTTPS.
  */
 
 import { appendFileSync, existsSync } from "node:fs";
 
 const useTls = process.argv.includes("--tls");
 const port = Number(process.env.PORT) || 3456;
+const projectFile = (path: string) => Bun.file(new URL(path, import.meta.url));
+
+// Serve the same shared-code WAV harness that Pages builds. Keep paths
+// relative to this module so launching from another directory still works.
+const harnessBundle = await Bun.build({
+	entrypoints: [new URL("web/wav-entry.ts", import.meta.url).pathname],
+	target: "browser",
+});
+if (!harnessBundle.success) {
+	throw new AggregateError(harnessBundle.logs, "WAV harness build failed");
+}
 
 // Generate self-signed cert if needed
 if (useTls) {
@@ -55,12 +67,23 @@ Bun.serve({
 		},
 	}),
 	routes: {
-		"/": new Response(Bun.file("live.html"), {
+		"/": new Response(projectFile("live.html"), {
 			headers: { "Content-Type": "text/html" },
 		}),
-		"/live.html": new Response(Bun.file("live.html"), {
+		"/index.html": new Response(projectFile("live.html"), {
 			headers: { "Content-Type": "text/html" },
 		}),
+		"/live.html": new Response(projectFile("live.html"), {
+			headers: { "Content-Type": "text/html" },
+		}),
+		"/harness.html": new Response(projectFile("harness.html"), {
+			headers: { "Content-Type": "text/html" },
+		}),
+		"/wav-decode.js": new Response(harnessBundle.outputs[0], {
+			headers: { "Content-Type": "application/javascript" },
+		}),
+		"/SPEC.md": new Response(projectFile("docs/SPEC.md")),
+		"/enbeep-frame.rsc": new Response(projectFile("encode/enbeep-frame.rsc")),
 		"/api/frame": {
 			POST: async (req) => {
 				const raw = await req.text();
@@ -81,7 +104,7 @@ Bun.serve({
 					...(body as Record<string, unknown>),
 				});
 				try {
-					appendFileSync("frames.jsonl", row + "\n");
+					appendFileSync("frames.jsonl", `${row}\n`);
 				} catch (err) {
 					return Response.json({ ok: false, error: String(err) }, { status: 500 });
 				}
@@ -115,7 +138,7 @@ try {
 		console.log(`  Network: ${proto}://${ip}:${port}`);
 		if (useTls) {
 			console.log(`\n  Open the Network URL on your iPhone.`);
-			console.log(`  Safari will warn about the self-signed cert — tap "Show Details" → "visit this website".`);
+			console.log(`  Self-signed TLS: mic access may require device-specific certificate trust.`);
 		} else {
 			console.log(`\n  Note: iPhone mic requires HTTPS. Run with --tls for LAN access.`);
 		}

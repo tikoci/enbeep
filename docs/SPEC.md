@@ -1,13 +1,42 @@
 # enbeep v2 frame spec
 
 This is the single source of truth for the wire format. The RouterOS
-encoder ([encode/enbeep-frame.rsc](../encode/enbeep-frame.rsc)), the offline
+encoder ([encode/enbeep.rsc](../encode/enbeep.rsc)), the offline
 decoder ([src/frame.ts](../src/frame.ts)), and the live decoder
 ([live.html](../live.html)) must all match this document. If code and spec
 disagree, the spec wins and the code is the bug.
 
 Status: v2, frozen for the demo. v1 (byte-sum checksum, SOF/EOF tones) is
 retired; v1 captures must reject, never decode as v2.
+
+## Why this scheme?
+
+The goal is a playful modem that fits in a RouterOS script and works with
+a piezo and an ordinary microphone. These are experimental choices,
+based on the [captures tested so far](TESTING.md), not an optimized modem
+design or a claim of compatibility with other MFSK protocols.
+
+- **One pitch per hex digit.** [Multiple frequency-shift keying (MFSK)](https://en.wikipedia.org/wiki/Multiple_frequency-shift_keying)
+  represents values by choosing a frequency. Here there are 16 choices,
+  enough for a four-bit [nibble](https://en.wikipedia.org/wiki/Nibble).
+  For example, byte `0x4D` becomes nibble 4 then nibble 13. This maps
+  directly to RouterOS integer division and remainder, and needs only
+  one `:beep` at a time. More pitches carry more bits per tone, but give
+  the receiver more frequencies to distinguish reliably.
+- **Slow tones and a sweep every time.** A symbol is one timed tone
+  slot. The long slots let the previous beep fade; piezo ringing and room
+  echoes otherwise overlap the next symbol
+  ([intersymbol interference](https://en.wikipedia.org/wiki/Intersymbol_interference)).
+  The sweep checks every data pitch and estimates a common pitch offset.
+  This spends time on calibration for every transmission; the chosen
+  pitches and timings have evidence on only two router models.
+- **Length plus checksum.** The length lets the receiver check how many
+  bytes arrived; [Fletcher-16](https://en.wikipedia.org/wiki/Fletcher%27s_checksum)
+  adds two check bytes using simple arithmetic. It replaced a byte sum
+  after a recorded false accept. It detects many errors but cannot
+  guarantee correct data, authenticate a sender, or generally recover
+  damaged bytes. The narrow slot-0 repair below is a separate structural
+  rule that still requires the checksum to pass.
 
 ## Physical layer
 
@@ -53,6 +82,9 @@ merge into the adjacent 1-2 s syncs and be undetectable.
 Decoders must not assume every payload is an announce frame: any
 `LEN`-consistent payload with a valid checksum is a valid frame.
 `$enbeepText` sends arbitrary text bytes under the same framing.
+There is no payload type or character-encoding tag. The live page treats
+11-byte payloads as announcements by convention and also shows their
+text reading, so an 11-byte message remains visible.
 
 ## Checksum: Fletcher-16
 
@@ -66,9 +98,12 @@ check bytes = [s1, s2]   # sent after the payload
 
 Fletcher-16 is mandatory, not advisory. The dominant failure mode is
 ring-down smear that lands exactly on a wrong tone center (residual ≈ 0),
-so frequency margins cannot detect it — only the checksum can
-(1/65536 false-accept class). v1's byte-sum (1/256) produced a real
-false accept on air; that is why v2 exists.
+so frequency margins cannot detect it; the checksum is a separate,
+required error check. v1's byte-sum produced a real false accept on air;
+that is why v2 exists. Fletcher-16 also has collisions: for example,
+replacing a payload byte `0x00` with `0xFF` leaves these modulo-255 sums
+unchanged. No fixed false-accept probability is promised for acoustic
+errors, and a pass does not authenticate the sender.
 
 ## Calibration and decoding rules
 
@@ -79,9 +114,12 @@ false accept on air; that is why v2 exists.
 3. Sample data slots late ([50%, 90%] of each slot in the offline
    decoder): the previous tone's ring decays while the driven tone
    holds, so late windows discriminate loud→quiet transitions best.
-4. Verify, in order: sweep shape, byte count (`bytes == LEN + 3`),
-   band margin, Fletcher-16. Any failure rejects the whole frame.
-   There is no partial decode and no "best effort" payload.
+4. Verify sweep shape, then data band margin, byte count
+   (`bytes == LEN + 3`), and Fletcher-16. Any failure rejects the whole
+   frame. There is no partial decode and no "best effort" payload.
+
+Sweep-only probes can report calibration success (`ok: true`,
+`payload: null`, `sumOk: false`); that is not a verified data frame.
 
 ## Erasure tolerance
 
@@ -98,6 +136,21 @@ Both decoders repair this identically:
 Repairs are flagged, never silent: the offline result carries
 `sweepDropout`/`dataErasure`, and the live result card shows which
 section was repaired.
+
+## Current implementation limits
+
+These describe today's tools, not additional wire-format rules:
+
+- The browser sender and the live receiver both accept the full 1–255
+  UTF-8 byte range: the DATA deadline scales with the worst-case frame
+  at the active symbol length, and synthetic live/offline parity covers
+  255 bytes at 200/400 ms. Long over-air frames still need hardware
+  trials: start with short messages such as `Hello`, and treat 255 bytes
+  as a wire limit, not a verified acoustic capability.
+- The live result and diagnostics render printable ASCII bytes as text,
+  with other bytes shown as `·`; they do not decode UTF-8 for display.
+  Hex retains the original bytes. `$enbeepText` transmits the bytes of
+  the RouterOS string; non-ASCII terminal input needs separate testing.
 
 ## Versioning
 

@@ -1,14 +1,24 @@
 # Loading the enbeep encoder onto a box
 
 The encoder is `:global` functions. RouterOS globals are **RAM-only**: they
-vanish on reboot and must be reloaded. The `.rsc` file may live on flash
-for reference, but **do not `/import` it on 7.16** (RB953): import-defined
-globals silently cannot call other globals (nested calls no-op, no error).
-CLI-pasted (SSH, recipe A) definitions nest fine on all versions tested.
-API-loaded (centrs, recipe B) definitions may silently fail to nest on
-7.16 exactly like `/import`: symptom is a dry-run that prints META but no
-FRAME — reload via recipe A. (Observed 2026-10-27 after a silent global
-loss with no reboot; the loss itself is unexplained.)
+vanish on reboot and must be reloaded (or dropped deliberately with
+`/system/script/environment/remove [find where name~"enbeep"]`).
+Each function body re-declares the globals it calls, per the scripting
+manual, and bad inputs fail fast with an `enbeep:`-prefixed error before
+any beep: empty or >255-byte payloads, sym/tone that are not times (bare
+`200` would silently mean 200 *seconds*), tone longer than the symbol, or
+an unknown interface/address selection.
+
+Loading history: on 7.16 (RB953), `/import`-defined globals silently could
+not call other globals (nested calls no-op, no error), and API-loaded
+(centrs, recipe B) definitions could fail the same way; symptom is a
+dry-run that prints META but no FRAME — reload via recipe A. That predates
+the `:global` hardening above, which is the documented fix for exactly
+this failure, but it still needs a re-test on real 7.16 hardware: until
+then, CLI paste (SSH, recipe A) remains the verified recipe there. On CHR
+7.26beta3, paste, API-load, `/import`, and `[:parse ...]`-loading all nest
+correctly. (The 7.16 observation came after a silent global loss with no
+reboot on 2026-10-27; the loss itself is unexplained.)
 
 ## First try: router terminal + web receiver
 
@@ -23,7 +33,7 @@ are the primitives used here; measured hardware behavior is recorded in
 1. Open a RouterOS terminal (WinBox, WebFig, SSH, or serial). Check the
    beeper with `:beep frequency=4000 length=500ms`. No audible beep means
    this is not yet a usable acoustic sender.
-2. Paste the complete contents of [enbeep-frame.rsc](enbeep-frame.rsc)
+2. Paste the complete contents of [enbeep.rsc](enbeep.rsc)
    into that terminal. If multiline paste is troublesome, use recipe A
    below. Do not `/import` it as a substitute on 7.16.
 3. Run `/interface print` and `/ip address print` in that terminal.
@@ -59,15 +69,18 @@ $enbeepText "Hello" 200ms 200ms yes
 $enbeepText "Hello" 200ms 200ms no
 ```
 
-The web receiver shows arbitrary payloads as hex; an 11-byte payload is
-displayed as an announcement by convention. The format has no payload
-type tag. Text transmission has less hardware coverage than announcements.
+The web receiver shows payloads as hex with a printable-ASCII reading;
+an 11-byte payload also gets an announcement reading by convention.
+The format has no payload type tag. Start with short ASCII text; see
+the [current implementation limits](../docs/SPEC.md#current-implementation-limits).
+Text transmission has less hardware coverage than announcements.
 The text helper's argument order was corrected during the 2026-10-27
 readiness review; `"Hello" 200ms 200ms yes` was dry-run on CHR
 7.26beta3 and matched the shared v2 tone plan (len=5, f1=250, f2=170).
 That is logic evidence, not a new over-air hardware result.
-Reload the globals after reboot. `/tool fetch` + parse-loading remains
-unverified (NS-5); do not use it as the first-try recipe.
+Reload the globals after reboot. `/tool fetch` + parse-loading works on
+CHR 7.26beta3 (recipe C) but NS-5 still needs one real 7.16 box; do not
+use it as the first-try recipe until then.
 
 ## Recipe A: SSH from a checkout
 
@@ -76,7 +89,7 @@ Any SSH client; Python below only minifies the source:
 ```bash
 # 1. minify: strip #-lines/blank lines, join with spaces
 python3 -c "
-lines = [l.strip() for l in open('encode/enbeep-frame.rsc')]
+lines = [l.strip() for l in open('encode/enbeep.rsc')]
 one = ' '.join(l for l in lines if l and not l.startswith('#'))
 from pathlib import Path
 Path('.scratch').mkdir(exist_ok=True)
@@ -102,7 +115,7 @@ Via centrs (TIKOCI's RouterOS tooling, if installed):
 ```bash
 # 1. minify: strip #-lines/blank lines, join with spaces
 python3 -c "
-lines = [l.strip() for l in open('encode/enbeep-frame.rsc')]
+lines = [l.strip() for l in open('encode/enbeep.rsc')]
 one = ' '.join(l for l in lines if l and not l.startswith('#'))
 from pathlib import Path
 Path('.scratch').mkdir(exist_ok=True)
@@ -123,6 +136,23 @@ centrs execute <handle> --yes -- '$enbeepAnnounce "bridge" [/ip/address/find whe
 
 Find `<handle>` / interface / address per box (`centrs devices show`,
 `/ip address print`); replace the example address in the verify command.
+
+## Recipe C: experimental fetch from the site (CHR-verified, needs 7.16 hardware)
+
+One line, no file download: fetch returns the script as data and `:parse`
+runs it in the current scope, like a paste:
+
+```routeros
+[:parse ([/tool/fetch url="https://<site>/enbeep.rsc" output=user as-value]->"data")]
+```
+
+Replace `<site>` with the host serving the decoder page; the page's Try it
+tab shows this command with the URL filled in. Verified on CHR 7.26beta3
+(dry-run prints the full FRAME + T: trace, no file left on flash); the
+older two-step fetch-to-file + `[:parse [/file/get ... contents]]` form
+passed there too. NS-5 keeps this experimental until one real 7.16 box
+confirms it. Verify with the dry-run in step 4 above: META without FRAME
+means the load failed.
 
 Validated hardware (lab codenames in `samples/` map to these models):
 

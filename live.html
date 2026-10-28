@@ -178,6 +178,13 @@
             word-break: break-all;
         }
         .copybtn { flex: 0 0 auto; padding: 0.3rem 0.8rem; font-size: 0.75rem; }
+        #view-try details { margin: 0.35rem 0; }
+        #view-try summary { cursor: pointer; color: var(--primary); font-size: 0.82rem; }
+        #rscPre { max-height: 16rem; overflow-y: auto; }
+        #rscPre, #rosFetch { word-break: normal; overflow-wrap: anywhere; }
+        .loadopt { margin: 0.4rem 0 0.6rem 0; font-size: 0.82rem; line-height: 1.6; }
+        .loadopt > b { color: var(--text); }
+        #gotoDecode { border-color: var(--primary); color: var(--primary); width: 100%; }
         .trynote { font-size: 0.78rem; color: var(--muted); line-height: 1.55; margin: 0.4rem 0; }
         .trynote b { color: var(--text); font-weight: 600; }
         .sender {
@@ -188,7 +195,7 @@
             margin: 0.5rem 0;
         }
         .msglabel { display: block; font-size: 0.75rem; color: var(--muted); }
-        #tryMsg {
+        #tryMsg, #senderNote {
             display: block;
             width: 100%;
             margin-top: 0.25rem;
@@ -199,6 +206,7 @@
             border: 1px solid var(--form-border);
             border-radius: var(--radius);
         }
+        #senderNote { font-size: 0.85rem; margin-bottom: 0.5rem; }
         .sendrow { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
         #playBtn { border-color: var(--primary); color: var(--primary); }
         #playBtn:disabled { opacity: 0.4; cursor: default; }
@@ -245,6 +253,8 @@
         #status.decoding { color: var(--ok); }
         #status.done { color: var(--primary); }
         #status.error { color: var(--err); }
+        #hint { text-align: center; font-size: 0.78rem; color: var(--sync); margin-bottom: 0.5rem; }
+        #hint:empty { display: none; }
 
         .waterfall-wrap {
             position: relative;
@@ -371,15 +381,28 @@
             <li>In a router terminal, check the beeper:
                 <code>:beep frequency=4000 length=500ms</code>.
                 No sound means no sender on this box.</li>
-            <li>Load the encoder: open <a href="./enbeep-frame.rsc">enbeep-frame.rsc</a>
-                and paste the whole file into that terminal. Paste, do not
-                <code>/import</code> &mdash; on 7.16 imported globals silently cannot
-                call each other. Globals are RAM-only: reload after reboot.</li>
+            <li>Load the encoder into that terminal — pick one:
+                <div class="loadopt"><b>Option 1 — paste</b> (works everywhere):
+                copy the whole script, paste it:
+                    <details id="rscDetails">
+                        <summary>Show enbeep.rsc</summary>
+                        <pre class="cmd" id="rscPre">Loading…</pre>
+                        <button class="copybtn" id="copyRsc">Copy</button>
+                    </details>
+                </div>
+                <div class="loadopt"><b>Option 2 — fetch</b> (experimental: needs
+                the router to reach this site; CHR-verified, one 7.16 hardware
+                check still open): paste this one line, no file download:
+                    <pre class="cmd" id="rosFetch">loading…</pre>
+                    <button class="copybtn" id="copyFetch">Copy</button>
+                </div>
+                <div class="trynote">Globals are RAM-only: reload after reboot.
+                (<a href="./enbeep.rsc">plain file</a>.)</div></li>
             <li>Dry-run silently (edit the message, keep the quotes plain):
                 <pre class="cmd" id="rosDry">$enbeepText "Hello" 200ms 200ms yes</pre>
                 <button class="copybtn" id="copyDry">Copy</button>
                 Expect <code>FRAME</code> and <code>T:</code> lines. Anything else means
-                the load failed &mdash; paste step 2 again.</li>
+                the load failed &mdash; repeat step 2.</li>
             <li>On the listener, open the <b>Decode</b> tab, pick the same symbol
                 length, press <b>Start Listening</b>, and hold the mic ~0.3&nbsp;m
                 from the beeper.</li>
@@ -415,6 +438,12 @@
         and room noise. Rejections are data: open <b>Diagnostics &rarr; Copy diagnostics
         report</b> while the attempt is still on screen &mdash; the report keeps your
         last session across one reset. Slow or quiet beeper? Try 400&nbsp;ms both sides.</p>
+
+        <h2 class="tryhead">Then listen</h2>
+        <p class="trynote">The beeps need a listener: on this or another system showing
+        this page, open the <b>Decode</b> tab, pick the same symbol length, and press
+        <b>Start Listening</b> <i>before</i> the sender plays.</p>
+        <button id="gotoDecode">Open the Decode tab &rarr;</button>
     </section>
 
     <section id="view-decode" class="view" role="tabpanel" aria-label="Decode">
@@ -436,6 +465,7 @@
         </div>
 
         <div id="status">Ready</div>
+        <div id="hint" aria-live="polite"></div>
 
         <div id="result"></div>
     </section>
@@ -463,6 +493,11 @@
         <div id="nibble-log"></div>
 
         <div class="report">
+            <label class="msglabel">Sender note (optional — sym/tone/interface, helps triage)
+                <input id="senderNote" type="text" autocomplete="off"
+                    autocapitalize="off" spellcheck="false" maxlength="120"
+                    placeholder="e.g. 200/200 bridge row 0, 0.3 m">
+            </label>
             <div class="controls">
                 <button id="reportBtn">Copy diagnostics report</button>
             </div>
@@ -503,6 +538,13 @@
         snrDb:       12,      // dB above adaptive floor = signal present
         longSyncMs:  800,     // sync run that counts as a delimiter
         sweepTones:  16,
+        // NS-28 pre-flight thresholds (documented in docs/DIAG.md).
+        micMinDb:    -90,     // broadband peak below this = mic dead
+        roomMaxDb:   -45,     // resting (p10) level above this = room too loud
+        clipFracMax: 0.001,   // time-domain |x|>0.99 fraction above this = too hot
+        bandMinDb:   -50,     // in-band mean must exceed this to matter…
+        bandDeltaDb: -6,      // …while within this of out-of-band = whine in our band
+        btMaxSr:     16000,   // mono at/below this sample rate = BT/HFP signature
     });
 
     const DATA_FREQS = Array.from({ length: C.numTones }, (_, i) => C.baseFreq + i * C.step);
@@ -521,6 +563,7 @@
     let analyser = null;
     let micStream = null;
     let freqData = null;
+    let timeData = null;
     let wakeLock = null;
     let symMs = 200;             // active symbol length for this frame
 
@@ -577,6 +620,31 @@
     let checkResults = [];
     // Last enumerateDevices audioinput count (-1 = unknown yet).
     let knownMics = -1;
+    // Session acoustic stats (NS-28): aggregates only, for no-harness
+    // triage. Frame-level fields update in processFrame (mic + synth);
+    // spectrum/time-domain fields update in tick (mic only, n/a under
+    // synth). Survives Stop so a post-session report stays meaningful.
+    let ses = null;
+    function resetSessionStats() {
+        ses = { t0: -1, lastTs: 0, floorMin: Infinity, floorMax: -Infinity,
+            loudSync: -Infinity, loudData: -Infinity, everLoud: false,
+            locks: 0, dropouts: 0, hidden: 0, clipPeak: null,
+            bandIn: 0, bandInN: 0, bandOut: 0, bandOutN: 0 };
+    }
+    // Mic-path identity (NS-28): last-known, kept across Stop for the
+    // report. appliedSettings is a track.getSettings() snapshot;
+    // appliedLabel is the track's own label (the picker may change or
+    // point elsewhere afterwards, so the report must not re-read it).
+    let appliedSettings = null;
+    let appliedLabel = null;
+    let routeClass = null;
+    let micFailed = null;
+    let micDeadFired = false;
+    let lastTickTs = 0;
+    // True when the analyser is fed by synth (Self-test / Try sender),
+    // not a mic: clip + band stats are mic-path measurements and stay
+    // n/a. Set alongside every resetDecode/testReset.
+    let sessionIsSynth = false;
 
     // --- DOM ---
     const startBtn  = document.getElementById('startBtn');
@@ -591,7 +659,15 @@
     const rosLive   = document.getElementById('rosLive');
     const copyDry   = document.getElementById('copyDry');
     const copyLive  = document.getElementById('copyLive');
+    const rscDetails = document.getElementById('rscDetails');
+    const rscPre    = document.getElementById('rscPre');
+    const copyRsc   = document.getElementById('copyRsc');
+    const rosFetch  = document.getElementById('rosFetch');
+    const copyFetch = document.getElementById('copyFetch');
+    const gotoDecode = document.getElementById('gotoDecode');
     const statusEl  = document.getElementById('status');
+    const hintEl    = document.getElementById('hint');
+    const senderNote = document.getElementById('senderNote');
     const canvas    = document.getElementById('waterfall');
     const wfWrap    = document.getElementById('waterfallWrap');
     const freqLabel = document.getElementById('freqLabel');
@@ -670,6 +746,21 @@
     tryMsg.addEventListener('input', refreshTryMeta);
     copyDry.addEventListener('click', () => copyCmd('rosDry', copyDry));
     copyLive.addEventListener('click', () => copyCmd('rosLive', copyLive));
+    copyRsc.addEventListener('click', () => copyCmd('rscPre', copyRsc));
+    copyFetch.addEventListener('click', () => copyCmd('rosFetch', copyFetch));
+    gotoDecode.addEventListener('click', () => switchView('decode'));
+    let rscLoaded = false;
+    rscDetails.addEventListener('toggle', async () => {
+        if (!rscDetails.open || rscLoaded) return;
+        rscLoaded = true;
+        try {
+            const res = await fetch('enbeep.rsc');
+            if (!res.ok) throw new Error('http ' + res.status);
+            rscPre.textContent = await res.text();
+        } catch (e) {
+            rscPre.textContent = 'Could not load the script here — open enbeep.rsc next to this page instead.';
+        }
+    });
     tabTry.addEventListener('click', () => switchView('try'));
     tabDecode.addEventListener('click', () => switchView('decode'));
     tabDiag.addEventListener('click', () => switchView('diag'));
@@ -691,7 +782,13 @@
             if (track) {
                 track.onended = () => micDead('Mic track ended — tap Stop, then Start');
                 track.onmute = () => micDead('Mic muted by OS — tap Stop, then Start');
+                // Requested constraints may be ignored (iOS): snapshot what
+                // the OS actually applied, for the route line + BT steerage.
+                appliedSettings = snapshotSettings(track);
+                appliedLabel = track.label || null;
+                routeClass = classifyRoute(track.label || '', appliedSettings).labelClass;
             }
+            micFailed = null;
 
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             await audioCtx.resume();
@@ -703,10 +800,12 @@
             src.connect(analyser);
 
             freqData = new Float32Array(analyser.frequencyBinCount);
+            timeData = new Float32Array(analyser.fftSize);
             try {
                 if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen');
             } catch (e) { /* unsupported — user must keep the screen awake */ }
             resetDecode();
+            sessionIsSynth = false;
             setupCanvas();
             updateUI();
             refreshMicList(); // labels now available
@@ -714,6 +813,7 @@
         } catch (err) {
             const msg = err && err.message ? err.message : String(err);
             const nm = err && err.name ? err.name : '';
+            micFailed = nm || msg;
             setStatus('Mic error: ' + msg, 'error');
             log('err', '  mic start failed' + (nm ? ' (' + nm + ')' : '') + ': ' + micGuidance(nm));
         }
@@ -730,6 +830,9 @@
         dataErasure = false;
         floorDb = C.noiseFloor;
         floorHist.length = 0;
+        resetSessionStats();
+        micDeadFired = false;
+        lastTickTs = 0;
         frameCount = 0;
         frameLog.length = 0;
         diagLog.length = 0;
@@ -737,14 +840,17 @@
         symMs = Number(symSel.value) || 200;
         resultEl.className = '';
         resultEl.innerHTML = '';
+        hintEl.textContent = '';
         outputEl.innerHTML = '<span class="cursor">&#9612;</span>';
         logEl.innerHTML = '';
     }
 
     function micDead(msg) {
+        micDeadFired = true;
         setStatus(msg, 'error');
         log('err', '  ' + msg);
         postFrame({ ok: false, error: msg, symMs });
+        refreshHint();
     }
 
     function micState() {
@@ -758,6 +864,7 @@
         if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
         analyser = null;
         state = S.IDLE;
+        hintEl.textContent = '';
         updateUI();
     }
 
@@ -766,8 +873,26 @@
     function tick(ts) {
         if (state === S.IDLE || !analyser) return;
         if (ts === undefined) ts = performance.now();
+        // rAF gap = the loop stalled (background throttle, GC): decode
+        // slots went unobserved, so count it as a dropout, not data.
+        if (lastTickTs > 0 && ts - lastTickTs > 250) ses.dropouts++;
+        lastTickTs = ts;
 
         analyser.getFloatFrequencyData(freqData);
+        // Clip scan (NS-28): peak-hold the hottest time-domain sample.
+        // Mic path only — synth sessions would report oscillator peaks
+        // as if a microphone measured them. The method check is for old
+        // iOS (pre-14.1 lacks float time-domain data): without it the
+        // live loop would throw every frame there.
+        if (timeData && !sessionIsSynth && analyser.getFloatTimeDomainData) {
+            analyser.getFloatTimeDomainData(timeData);
+            let m = 0;
+            for (let i = 0; i < timeData.length; i++) {
+                const v = Math.abs(timeData[i]);
+                if (v > m) m = v;
+            }
+            if (ses.clipPeak === null || m > ses.clipPeak) ses.clipPeak = m;
+        }
 
         const sr = audioCtx.sampleRate;
         const binHz = sr / C.fftSize;
@@ -805,7 +930,23 @@
 
         const [syncNow, syncRunMs] = trackSync(ts, isSync);
 
-        processFrame(ts, isSync, syncNow, syncRunMs, dataPeakFreq, dataPeak, threshDb);
+        // Session band energy (NS-28): in-band vs everything else, for
+        // the "noise sits in our band" triage split. Power-mean, not a
+        // dB mean — averaging dB would hide a loud tone among floor
+        // bins. sLo/sHi/dLo/dHi are the detector's own band edges.
+        // Mic path only (see the clip scan above).
+        if (!sessionIsSynth) {
+            let inPow = 0, inN = 0, outPow = 0, outN = 0;
+            for (let i = 1; i < freqData.length; i++) {
+                const p = freqData[i] > -Infinity ? Math.pow(10, freqData[i] / 10) : 0;
+                if ((i >= dLo && i <= dHi) || (i >= sLo && i <= sHi)) { inPow += p; inN++; }
+                else { outPow += p; outN++; }
+            }
+            if (inN > 0) { ses.bandIn += inPow / inN; ses.bandInN++; }
+            if (outN > 0) { ses.bandOut += outPow / outN; ses.bandOutN++; }
+        }
+
+        processFrame(ts, isSync, syncNow, syncRunMs, dataPeakFreq, dataPeak, threshDb, syncPeak, dataPeak);
 
         // Indicators
         if (!isSync && dataPeak > threshDb) {
@@ -831,6 +972,7 @@
             postFrame({ alive: true, st: state, symMs, mic: micState(),
                 syncDb: +syncPeak.toFixed(1), dataDb: +dataPeak.toFixed(1),
                 floorDb: +floorDb.toFixed(1) });
+            refreshHint();
         }
 
         requestAnimationFrame(tick);
@@ -853,7 +995,17 @@
     // --- Decode state machine (timestamp slot-counting; repeat-nibble safe) ---
     // isSync = this frame's raw classification (edge detection);
     // syncNow = flicker-tolerant sync presence (run tracking).
-    function processFrame(ts, isSync, syncNow, syncRunMs, peakFreq, peakDb, threshDb) {
+    // syncDb/dataDb = band peaks this frame (session stats; may equal
+    // peakDb on paths that only track one band).
+    function processFrame(ts, isSync, syncNow, syncRunMs, peakFreq, peakDb, threshDb, syncDb, dataDb) {
+        // Session acoustic stats (NS-28): every frame, mic + synth.
+        if (ses.t0 < 0) ses.t0 = ts;
+        ses.lastTs = ts;
+        if (floorDb < ses.floorMin) ses.floorMin = floorDb;
+        if (floorDb > ses.floorMax) ses.floorMax = floorDb;
+        if (syncDb > ses.loudSync) ses.loudSync = syncDb;
+        if (dataDb > ses.loudData) ses.loudData = dataDb;
+        if (Math.max(syncDb, dataDb) > threshDb) ses.everLoud = true;
         switch (state) {
             case S.LISTENING:
                 // Preamble ends: long sync run just ended -> sweep starts now
@@ -865,6 +1017,7 @@
                     syncRunStart = -1; // preamble run is over; don't bleed
                     lastSyncTs = -1;
                     symMs = Number(symSel.value) || 200;
+                    ses.locks++;
                     setStatus('Preamble locked — calibrating…', 'sync');
                     log('sync', '▶ preamble locked, sweep @ ' + symMs + ' ms');
                 }
@@ -900,7 +1053,13 @@
                 break;
 
             case S.DATA: {
-                if (ts - slotT0 > 30000) return failFrame('data timeout');
+                // Worst-case DATA deadline: a full 255-byte frame at this
+                // symbol length, plus END-recognition margin. Never shorten
+                // it from an early LEN read: slot-0 masking makes the first
+                // tones untrustworthy (see finishData). A missing END still
+                // fails, after the longest valid frame could have ended.
+                const maxDataMs = 2 * (255 + 3) * symMs + 5000;
+                if (ts - slotT0 > maxDataMs) return failFrame('data timeout');
                 // END: long sync run -> section ends where the run began
                 if (syncNow && syncRunMs >= C.longSyncMs) {
                     return finishData(ts - syncRunMs);
@@ -1080,6 +1239,7 @@
         dataErasure = false;
         log('err', '  frame dropped: ' + why);
         setStatus('Listening — ' + why, 'error');
+        refreshHint();
         postFrame({ ok: false, error: why, symMs });
         state = S.LISTENING;
         syncRunStart = -1;
@@ -1342,6 +1502,22 @@
         rosLive.textContent = '$enbeepText "' + shown + '" 200ms 200ms no';
     }
 
+    // Fetch one-liner with the site's own script URL filled in, so the
+    // router command is copy-paste ready wherever this page is hosted.
+    // Single expression, no file download: fetch returns the script as
+    // data and :parse runs it in the current scope, like a paste.
+    function refreshFetchCmd() {
+        let url = null;
+        try {
+            if (typeof document !== 'undefined' && document.baseURI) {
+                url = new URL('enbeep.rsc', document.baseURI).href;
+            }
+        } catch (e) { url = null; }
+        if (!url) url = 'https://<this-site>/enbeep.rsc';
+        rosFetch.textContent = '[:parse ([/tool/fetch url="' + url
+            + '" output=user as-value]->"data")]';
+    }
+
     async function copyCmd(id, btn) {
         const el = document.getElementById(id);
         const label = btn.textContent;
@@ -1360,8 +1536,10 @@
         analyser.fftSize = C.fftSize;
         analyser.smoothingTimeConstant = C.smoothing;
         freqData = new Float32Array(analyser.frequencyBinCount);
+        timeData = new Float32Array(analyser.fftSize);
 
         resetDecode();
+        sessionIsSynth = true;
         setupCanvas();
         updateUI();
         requestAnimationFrame(tick);
@@ -1442,6 +1620,102 @@
         dropCounts[key] = (dropCounts[key] || 0) + 1;
     }
 
+    // --- NS-28 pre-flight verdicts (pure: also unit-tested via __enbeep) ---
+    function snapshotSettings(track) {
+        try {
+            const s = track.getSettings ? track.getSettings() : {};
+            return { sampleRate: s.sampleRate ?? null, channelCount: s.channelCount ?? null,
+                echoCancellation: s.echoCancellation ?? null,
+                noiseSuppression: s.noiseSuppression ?? null,
+                autoGainControl: s.autoGainControl ?? null };
+        } catch (e) { return null; }
+    }
+
+    function formatSettings(s) {
+        if (!s) return 'settings unknown';
+        const parts = [];
+        if (s.sampleRate) parts.push(Math.round(s.sampleRate / 100) / 10 + 'kHz');
+        if (s.channelCount) parts.push(s.channelCount + 'ch');
+        for (const [k, tag] of [['echoCancellation', 'EC'], ['noiseSuppression', 'NS'],
+            ['autoGainControl', 'AGC']]) {
+            if (s[k] === true) parts.push(tag + ' on');
+            else if (s[k] === false) parts.push(tag + ' off');
+        }
+        return parts.length ? parts.join(' · ') : 'settings unknown';
+    }
+
+    // Label classification + Bluetooth/HFP signature. btSuspect is the
+    // steerage signal: BT mic audio is narrowband/high-latency and this
+    // scheme wants a wired, built-in, or USB mic instead. USB wins over
+    // generic "headset" (a USB headset is not on HFP audio); a bare
+    // headset label only suspects when the settings look lo-fi too.
+    function classifyRoute(label, settings) {
+        const l = String(label || '');
+        let labelClass = null;
+        if (/bluetooth|airpod|\bhfp\b/i.test(l)) labelClass = 'bluetooth';
+        else if (/usb/i.test(l)) labelClass = 'usb';
+        else if (/headset|hands[-\s]?free/i.test(l)) labelClass = 'headset';
+        const ch = settings ? settings.channelCount : null;
+        const sr = settings ? settings.sampleRate : null;
+        const lofi = ch === 1 && typeof sr === 'number' && sr <= C.btMaxSr;
+        const btSuspect = labelClass === 'bluetooth'
+            || (labelClass !== 'usb' && lofi);
+        return { labelClass, btSuspect: !!btSuspect };
+    }
+
+    function roomVerdict(p10Db) {
+        const ok = p10Db <= C.roomMaxDb;
+        return { ok, detail: 'resting ' + p10Db.toFixed(0) + ' dBFS in 1 s'
+            + (ok ? ' (quiet enough)' : ' (loud — try a quieter room?)') };
+    }
+
+    function clipVerdict(frac, peak) {
+        const ok = frac < C.clipFracMax;
+        return { ok, detail: 'peak ' + Math.round(peak * 100) + '% · '
+            + (frac * 100).toFixed(2) + '% samples over 0.99'
+            + (ok ? '' : ' (too hot — move the mic back / lower the volume)') };
+    }
+
+    function bandVerdict(inDb, outDb) {
+        const delta = inDb - outDb;
+        const ok = !(inDb > C.bandMinDb && delta > C.bandDeltaDb);
+        return { ok, detail: 'in-band ' + inDb.toFixed(0) + ' vs out-of-band '
+            + outDb.toFixed(0) + ' dB (Δ' + delta.toFixed(0) + ')'
+            + (ok ? '' : ' (noise sits in 1.8–4.1 kHz — fan/HVAC?)') };
+    }
+
+    function btRouteActive() {
+        if (routeClass === 'bluetooth') return true;
+        if (!appliedSettings) return false;
+        return classifyRoute('', appliedSettings).btSuspect;
+    }
+
+    // Likely-cause hint from session evidence (also rendered live under
+    // the status line). First match wins; null = nothing to suggest.
+    function computeHint() {
+        if (btRouteActive()) {
+            return 'Bluetooth mic suspected — disconnect BT / switch to a wired, built-in, or USB mic';
+        }
+        if (micFailed || micDeadFired) {
+            return 'Mic path broken, not acoustic — ' + micGuidance(micFailed || '');
+        }
+        if (ses && ses.locks === 0 && ses.floorMax > C.roomMaxDb
+            && (ses.lastTs - ses.t0) / 1000 > 30) {
+            return 'Room loud or mic too far, no preamble lock in 30+ s — quieter room, 0.3 m on-axis, or 400 ms';
+        }
+        const symDrops = (dropCounts['sweep mismatch'] || 0) + (dropCounts['byte count'] || 0);
+        const verified = frameLog.some((f) => f.ok);
+        if (ses && ses.everLoud && symDrops > 0 && !verified) {
+            return 'Signal present but symbol length may mismatch — sender and picker must both be 200 or both 400 ms';
+        }
+        return null;
+    }
+
+    function refreshHint() {
+        const h = computeHint();
+        hintEl.textContent = h ? ('⚠ ' + h) : '';
+    }
+
     // One-line fix for a mic failure, by error name.
     function micGuidance(name) {
         switch (name) {
@@ -1501,6 +1775,48 @@
         return 'none';
     }
 
+    // NS-28 report-line builders. Synth feeds never touch a mic, so
+    // mic-only fields read n/a there — honest, and deterministic.
+    function routeLine() {
+        if (!appliedSettings && !routeClass) return 'none (synth feed)';
+        const cls = routeClass ? ' (' + routeClass + ')' : '';
+        return (appliedLabel || micLabel()) + cls + ' · ' + formatSettings(appliedSettings);
+    }
+
+    function sessionLine() {
+        const el = ses && ses.t0 >= 0 ? ((ses.lastTs - ses.t0) / 1000).toFixed(1) : '0.0';
+        const drops = ses ? ses.dropouts : 0;
+        const hid = ses ? ses.hidden : 0;
+        return 'listening ' + el + 's · attempts ' + frameLog.length
+            + ' · verified ' + frameLog.filter((f) => f.ok).length
+            + ' · dropouts ' + drops + ' · hidden ' + hid + '×';
+    }
+
+    function signalLine() {
+        if (!ses || ses.t0 < 0) return 'no frames yet';
+        const fl = ses.floorMin === Infinity ? 'n/a' : ses.floorMin.toFixed(0) + '–' + ses.floorMax.toFixed(0) + ' dB';
+        const loud = (v) => (v === -Infinity ? 'n/a' : v.toFixed(0));
+        const snr = (ses.loudSync === -Infinity && ses.loudData === -Infinity) || ses.floorMin === Infinity
+            ? 'n/a' : Math.round(Math.max(ses.loudSync, ses.loudData) - ses.floorMin) + ' dB';
+        const clip = ses.clipPeak === null ? 'n/a' : Math.round(ses.clipPeak * 100) + '%';
+        return 'floor ' + fl + ' · loudest sync/data ' + loud(ses.loudSync) + '/' + loud(ses.loudData)
+            + ' dB · est SNR ' + snr + ' · clip peak ' + clip;
+    }
+
+    function bandLine() {
+        if (!ses || !ses.bandInN || !ses.bandOutN) return 'n/a (synth feed)';
+        const db = (p, n) => (p > 0 ? 10 * Math.log10(p / n) : -Infinity);
+        const ib = db(ses.bandIn, ses.bandInN), ob = db(ses.bandOut, ses.bandOutN);
+        const f = (v) => (v === -Infinity ? '-inf' : v.toFixed(0));
+        const d = ib === -Infinity || ob === -Infinity ? 'n/a' : 'Δ' + (ib - ob).toFixed(0);
+        return 'in-band ' + f(ib) + ' vs out-of-band ' + f(ob) + ' dB (' + d + ')';
+    }
+
+    function senderLine() {
+        const v = (senderNote && senderNote.value ? senderNote.value : '').trim();
+        return v || '(not given — sender sym/tone/interface?)';
+    }
+
     function micLabel() {
         try {
             const o = micSel.options;
@@ -1529,9 +1845,21 @@
             ? (audioCtx.sampleRate + ' Hz · ' + audioCtx.state)
             : 'none (start listening or run checks)'));
         lines.push('- sym: ' + symMs + ' ms · noise floor: ' + floorDb.toFixed(0) + ' dB');
+        lines.push('- route: ' + routeLine());
+        lines.push('- session: ' + sessionLine());
+        lines.push('- signal: ' + signalLine());
+        lines.push('- band: ' + bandLine());
+        lines.push('- hint: ' + (computeHint() || 'none'));
+        lines.push('- sender: ' + senderLine());
         lines.push('- frames attempted: ' + frameLog.length
             + ' · verified: ' + frameLog.filter((f) => f.ok).length);
         lines.push('- counts above cover the most recent 20 verdicts, including synthetic checks');
+        if (checkResults.length) {
+            lines.push('### last checks (' + checkResults.length + ')');
+            for (const r of checkResults) {
+                lines.push('  [' + (r.ok ? '✓' : '✗') + '] ' + r.name + ' — ' + r.detail);
+            }
+        }
         lines.push('');
         const dropKeys = Object.keys(dropCounts).sort();
         lines.push('### drop reasons (' + dropKeys.length + ')');
@@ -1635,33 +1963,102 @@
         } catch (e) { knownMics = -1; }
         let stream = null;
         try {
-            stream = await navigator.mediaDevices.getUserMedia({ audio: {
+            // Probe the SELECTED mic, not whatever the default is: room,
+            // clip, and band verdicts must describe the input the user
+            // will actually listen with (esp. external-mic trials).
+            const constraints = {
                 echoCancellation: false, noiseSuppression: false, autoGainControl: false,
-            } });
+            };
+            if (micSel.value) constraints.deviceId = { exact: micSel.value };
+            stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
             const track = stream.getAudioTracks()[0];
             const label = (track && track.label) || 'unlabelled input';
+            // Persist the applied path for the report, even if the user
+            // never presses Start (checks-then-report flow).
+            appliedSettings = track ? snapshotSettings(track) : null;
+            appliedLabel = (track && track.label) || null;
+            routeClass = classifyRoute(label, appliedSettings).labelClass;
+            micFailed = null;
             const actx = AC || new (window.AudioContext || window.webkitAudioContext)();
             const src = actx.createMediaStreamSource(stream);
             const an = actx.createAnalyser();
             an.fftSize = 2048;
+            an.smoothingTimeConstant = 0; // honest probe: no inter-frame smear
             src.connect(an);
             const buf = new Float32Array(an.frequencyBinCount);
-            let peak = -Infinity;
+            const tbuf = new Float32Array(an.fftSize);
+            // Old iOS (pre-14.1) lacks float time-domain data: skip RMS +
+            // clip stats rather than failing the whole probe.
+            const hasTime = typeof an.getFloatTimeDomainData === 'function';
+            const binHz = actx.sampleRate / an.fftSize;
+            const inLo = Math.floor(C.dataBandMin / binHz);
+            const inHi = Math.min(Math.ceil(C.syncBandMax / binHz), buf.length - 1);
+            // 2 s probe: first half settles handling noise, second half
+            // measures. Frame peaks feed the resting-level percentile;
+            // band energy accumulates as power (a dB mean would hide a
+            // loud tone among floor bins).
+            const framePeaks = [];
+            let peak = -Infinity, sumSq = 0, nSamp = 0, clipN = 0, totN = 0, tPeak = 0;
+            let inPow = 0, inN = 0, outPow = 0, outN = 0;
             const t0 = performance.now();
-            while (performance.now() - t0 < 1000) {
+            while (performance.now() - t0 < 2000) {
+                const measure = performance.now() - t0 >= 1000;
                 an.getFloatFrequencyData(buf);
+                let fp = -Infinity, fi = 0, fin = 0, fo = 0, fon = 0;
                 for (let i = 0; i < buf.length; i++) {
-                    if (buf[i] > peak) peak = buf[i];
+                    if (buf[i] > fp) fp = buf[i];
+                    if (measure) {
+                        const p = buf[i] > -Infinity ? Math.pow(10, buf[i] / 10) : 0;
+                        if (i >= inLo && i <= inHi) { fi += p; fin++; }
+                        else { fo += p; fon++; }
+                    }
+                }
+                if (measure) {
+                    framePeaks.push(fp);
+                    if (fp > peak) peak = fp;
+                    if (fin > 0) { inPow += fi / fin; inN++; }
+                    if (fon > 0) { outPow += fo / fon; outN++; }
+                    if (hasTime) {
+                        an.getFloatTimeDomainData(tbuf);
+                        for (let i = 0; i < tbuf.length; i++) {
+                            const v = tbuf[i], a = Math.abs(v);
+                            sumSq += v * v; nSamp++;
+                            if (a > tPeak) tPeak = a;
+                            totN++;
+                            if (a > 0.99) clipN++;
+                        }
+                    }
                 }
                 await sleep(50);
             }
             src.disconnect();
             if (!AC) await actx.close().catch(() => {});
-            const db = peak === -Infinity ? '-inf' : peak.toFixed(0);
-            push('mic', peak > -90, label + ' · peak ' + db + ' dBFS in 1 s'
-                + (peak > -90 ? '' : ' (silent — wrong device or muted?)'));
+            const rmsDb = nSamp > 0 && sumSq > 0 ? 10 * Math.log10(sumSq / nSamp) : -Infinity;
+            const rdb = (v) => (v === -Infinity ? '-inf' : v.toFixed(0));
+            const route = classifyRoute(label, appliedSettings);
+            const btFlag = route.btSuspect
+                ? ' · BLUETOOTH route suspected — disconnect BT / use a wired or USB mic' : '';
+            push('mic', peak > C.micMinDb, label + ' · peak ' + rdb(peak)
+                + ' · RMS ' + (hasTime ? rdb(rmsDb) + ' dBFS' : 'n/a') + ' · '
+                + formatSettings(appliedSettings) + btFlag
+                + (peak > C.micMinDb ? '' : ' (silent — wrong device or muted?)'));
+            framePeaks.sort((x, y) => x - y);
+            const p10 = framePeaks.length
+                ? framePeaks[Math.floor(framePeaks.length * 0.1)] : -Infinity;
+            const rv = roomVerdict(p10);
+            push('room', rv.ok, rv.detail);
+            if (hasTime) {
+                const cv = clipVerdict(totN ? clipN / totN : 0, tPeak);
+                push('clip', cv.ok, cv.detail);
+            } else {
+                push('clip', true, 'unavailable on this browser (no time-domain API)');
+            }
+            const toDb = (p, n) => (n > 0 && p > 0 ? 10 * Math.log10(p / n) : -Infinity);
+            const bv = bandVerdict(toDb(inPow, inN), toDb(outPow, outN));
+            push('band', bv.ok, bv.detail);
         } catch (e) {
             const nm = (e && e.name) || '';
+            micFailed = nm || String(e);
             push('mic', false, (nm ? nm + ': ' : '') + micGuidance(nm));
         } finally {
             if (stream) stream.getTracks().forEach((t) => t.stop());
@@ -1694,6 +2091,8 @@
         sweepOffset = 0;
         sweepDropout = false;
         dataErasure = false;
+        resetSessionStats();
+        sessionIsSynth = true;
         symMs = sym;
         symSel.value = String(sym);
         frameCount = 0;
@@ -1703,9 +2102,9 @@
         lastVerdict = null;
     }
 
-    function testFeed(ts, isSync, peakFreq, peakDb, threshDb) {
+    function testFeed(ts, isSync, peakFreq, peakDb, threshDb, syncDb, dataDb) {
         const [syncNow, syncRunMs] = trackSync(ts, isSync);
-        processFrame(ts, isSync, syncNow, syncRunMs, peakFreq, peakDb, threshDb);
+        processFrame(ts, isSync, syncNow, syncRunMs, peakFreq, peakDb, threshDb, syncDb, dataDb);
     }
 
     // Feed a whole tone plan as 60 fps classifier frames; return the first
@@ -1726,8 +2125,8 @@
             const syncTone = freq >= 3900;
             while (frame * step < end) {
                 const ts = frame * step;
-                if (syncTone) testFeed(ts, true, freq, quietDb, threshDb);
-                else testFeed(ts, false, freq + offsetHz, loudDb, threshDb);
+                if (syncTone) testFeed(ts, true, freq, quietDb, threshDb, loudDb, quietDb);
+                else testFeed(ts, false, freq + offsetHz, loudDb, threshDb, quietDb, loudDb);
                 frame++;
                 // A real consumer reacts to the first completed frame; later
                 // re-locks on the same feed are spurious by construction.
@@ -1741,6 +2140,7 @@
 
     // Test surface: pure helpers plus the state-machine driver.
     window.__enbeep = { fletcher16, tonesForFrame, freqToNibble, encodeMessage, C,
+        classifyRoute, roomVerdict, clipVerdict, bandVerdict,
         _selftest: { startSelfTest, stopListening },
         _test: { reset: testReset, feed: testFeed, verdict: () => lastVerdict,
             report: buildReport, runPlan: testFeedPlan,
@@ -1748,6 +2148,7 @@
 
     // Init
     document.addEventListener('visibilitychange', async () => {
+        if (document.hidden && state !== S.IDLE && ses) ses.hidden++;
         // Wake locks die with visibility; re-acquire when back (mic may
         // still need a Stop/Start — micDead will say so).
         if (!document.hidden && state !== S.IDLE && !wakeLock) {
@@ -1759,7 +2160,9 @@
     window.addEventListener('load', () => { setupCanvas(); refreshMicList(); });
     window.addEventListener('resize', () => { if (state !== S.IDLE) setupCanvas(); });
     symSel.addEventListener('change', () => { symMs = Number(symSel.value) || 200; refreshTryMeta(); });
+    resetSessionStats();
     refreshTryMeta();
+    refreshFetchCmd();
 </script>
 </body>
 </html>

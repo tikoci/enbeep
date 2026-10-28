@@ -16,9 +16,11 @@ scheme instead of becoming anecdotes.
 | Two-device browser demo | Speaker → another device's live mic | Walkthrough available; **no recorded device-pair verification yet** |
 
 Automated: `bun test` covers codec units and captures in `samples/` as
-regressions. Typecheck and lint are also required. The demo
-hardware path is also re-verifiable any time with
-`make decode FILE=samples/bigdude-v2-200a.wav SYM=200` (exit 0 = verified).
+regressions. Install Git LFS and run `git lfs pull` after cloning so those
+fixtures are audio, not pointer files. Typecheck and lint are also
+required. Recheck a recorded hardware frame any time with
+`make decode FILE=samples/bigdude-v2-200a.wav SYM=200`
+(expect `ok: true` and `sumOk: true`).
 
 About iPhone: mic access needs a secure context. `bun run serve:tls`
 (self-signed) is an experimental LAN option; certificate trust depends
@@ -50,6 +52,8 @@ For a speaker → microphone experiment, follow the
 The sender's Try-it Play message emits the same v2 framing. Only the
 receiver's verdict is acoustic evidence. Report both devices, browsers,
 volume, distance, and symbol length, including failed attempts.
+Start with short ASCII text; the [current implementation limits](SPEC.md#current-implementation-limits)
+cover the live timeout for long messages and the ASCII-only text preview.
 
 ## 2. Router, no special mic (the real test)
 
@@ -79,7 +83,8 @@ has the 5-minute setup.
 4. Triage: `bun run rig:analyze --file .scratch/captures/cap.wav --sym 200`.
    `verdict=OK` + your MAC/IP = success. Anything else = keep the
    file; it's data (§3). Machine-readable verdict:
-   `make decode FILE=<your.wav> SYM=200` (exit 0 = verified).
+   `make decode FILE=<your.wav> SYM=200`. A full frame needs `ok: true`
+   and `sumOk: true`; exit 0 alone also covers sweep-only calibration.
 5. Also try the live page (Pages build on a phone is ideal): hold the
    phone 0.3-1 m away, start listening before you trigger the frame.
 
@@ -99,12 +104,17 @@ has the 5-minute setup.
 From the live page, open the Diagnostics tab and **Copy diagnostics
 report** while the attempt is still present. The report keeps your last
 session across one reset (a retry, Self-test, or Run checks), but a
-second reset replaces it — copy before retrying twice. Run checks
-appends its own synthetic verdicts to the current history, so copy the
-attempt report first for the cleanest evidence. Then stop listening, run
-**Run checks**, and copy a second report if useful. Paste both reports —
-they carry the checklist below plus the decode history an agent needs
-to triage (field reference + playbook: `docs/DIAG.md`).
+second reset replaces it — copy before retrying twice. Fill the sender
+note first (sym/tone/interface): it travels in the report and sym
+mismatch is the #1 confound. Run checks appends its own synthetic
+verdicts to the current history, so copy the attempt report first for
+the cleanest evidence. Then stop listening, run **Run checks** (room,
+clip, and band rows predict acoustic failure before you play a frame),
+and copy a second report if useful — it embeds the check rows plus the
+session's acoustic block (route, elapsed, floor range, SNR estimate).
+Paste both reports — they carry the checklist below plus the decode
+history an agent needs to triage (field reference + playbook:
+`docs/DIAG.md`).
 
 Open an issue with:
 
@@ -120,8 +130,8 @@ Open an issue with:
   If GitHub will not accept a WAV attachment, attach it in a ZIP.
 
 Good captures become `samples/` regression tests with a one-line credit.
-Rejects are as valuable as decodes: half our current tests are captures
-that must keep failing for the right reason.
+Rejects are as valuable as decodes: the corpus includes captures that
+must keep failing for the right reason.
 
 ## 5. Refining the scheme (open questions)
 

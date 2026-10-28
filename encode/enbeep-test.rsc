@@ -1,5 +1,5 @@
 # LEGACY calibration format — pairs with decode/analyze_recording.py, not the v2 frame.
-# For v2 frames use enbeep-frame.rsc; for the frame spec see docs/SPEC.md.
+# For v2 frames use enbeep.rsc; for the frame spec see docs/SPEC.md.
 # enbeep-test.rsc
 # Systematic calibration + timing test sequence for MFSK-16.
 #

@@ -1,8 +1,9 @@
 # samples/ — air-capture regression corpus
 
-Every `.wav` here is a real recording of a real piezo through a real mic,
-locked in as a test. `bun test` decodes each one and asserts the verdict
-it had when captured (exact decode, or reject-for-this-reason).
+These are real recordings of piezos through microphones. `bun test`
+locks the current-frame and v1-capture verdicts (exact decode, or
+reject-for-this-reason); `legacy/` supports the separate retired Python
+analyzers below.
 
 Naming: `<device>-<era/run>-<mic/sym notes>.wav`. Lab codenames:
 
@@ -25,7 +26,10 @@ IP `172.22.74.254/24` (RB1100AHx4 runs; a video-safe lab range), and MAC
 These are lab devices published on purpose; use your own lab addressing
 for your captures and say so when you contribute one (docs/TESTING.md).
 
-Size note: ~81 MB of audio, stored in Git LFS (`samples/**/*.wav` and
-`samples/**/*.m4a` — install `git-lfs` before cloning). Fixtures must
-be lossless, so the size is deliberate; LFS keeps clones light without
-deleting fixtures — the tests are the spec's teeth.
+Size note: ~85 MB of WAVs and original M4As, tracked with Git LFS
+(`samples/**/*.wav` and `samples/**/*.m4a` — install `git-lfs` before
+cloning). Fixtures must
+be lossless; the M4As are kept for provenance, not as decoder inputs.
+The initial public history still needs the LFS migration/clean-history
+decision in NS-20 ([NEXT_STEPS.md](../NEXT_STEPS.md)); adding attributes
+does not convert audio already committed as ordinary Git objects.

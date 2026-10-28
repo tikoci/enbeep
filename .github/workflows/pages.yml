@@ -1,9 +1,17 @@
 name: Pages (live decoder + WAV harness)
 
+# Gated on CI (NS-21): this workflow deploys only after the CI workflow
+# completes successfully on a push to main in this repository, and checks
+# out the exact revision CI validated — a failed revision cannot deploy.
+# Recovery is a CI re-run, which fires this workflow again. There is
+# deliberately no workflow_dispatch: a manual deploy would bypass the
+# validation gate. The event/source guard below matters because CI also
+# runs on PRs and workflow_run carries elevated permissions.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,12 +24,15 @@ concurrency:
 
 jobs:
   deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: oven-sh/setup-bun@v2
       - name: Build harness bundle and assemble site
         run: |
@@ -30,7 +41,7 @@ jobs:
           cp live.html _site/index.html
           cp live.html _site/live.html
           cp harness.html _site/harness.html
-          cp encode/enbeep-frame.rsc _site/enbeep-frame.rsc
+          cp encode/enbeep.rsc _site/enbeep.rsc
           cp docs/SPEC.md _site/SPEC.md
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

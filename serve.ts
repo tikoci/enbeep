@@ -83,7 +83,7 @@ Bun.serve({
 			headers: { "Content-Type": "application/javascript" },
 		}),
 		"/SPEC.md": new Response(projectFile("docs/SPEC.md")),
-		"/enbeep-frame.rsc": new Response(projectFile("encode/enbeep-frame.rsc")),
+		"/enbeep.rsc": new Response(projectFile("encode/enbeep.rsc")),
 		"/api/frame": {
 			POST: async (req) => {
 				const raw = await req.text();

@@ -5,7 +5,8 @@
 // mirrors test/frame.test.ts (extend the sync, drop slot 0).
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { tonesForPayload } from "../src/frame";
+import { decodeRecording, tonesForPayload } from "../src/frame";
+import { renderTones } from "../src/synth";
 
 interface LiveVerdict {
   ok: boolean;
@@ -18,7 +19,15 @@ interface LiveVerdict {
 
 interface LiveTestApi {
   reset(sym: number): void;
-  feed(ts: number, isSync: boolean, peakFreq: number, peakDb: number, threshDb: number): void;
+  feed(
+    ts: number,
+    isSync: boolean,
+    peakFreq: number,
+    peakDb: number,
+    threshDb: number,
+    syncDb: number,
+    dataDb: number,
+  ): void;
   verdict(): LiveVerdict | null;
   report(): string;
   runPlan(
@@ -29,10 +38,22 @@ interface LiveTestApi {
   ): LiveVerdict | null;
 }
 
+interface RouteSettings {
+  channelCount: number | null;
+  sampleRate: number | null;
+}
+
 interface EnbeepHook {
   C: { noiseFloor: number; snrDb: number };
   tonesForFrame(payload: number[], sym: number): Array<[number, number]>;
   encodeMessage(text: string): { ok: boolean; bytes?: number[]; error?: string };
+  classifyRoute(
+    label: string,
+    settings: RouteSettings | null,
+  ): { labelClass: string | null; btSuspect: boolean };
+  roomVerdict(p10Db: number): { ok: boolean; detail: string };
+  clipVerdict(frac: number, peak: number): { ok: boolean; detail: string };
+  bandVerdict(inDb: number, outDb: number): { ok: boolean; detail: string };
   _test: LiveTestApi;
 }
 
@@ -312,6 +333,88 @@ test("live 11-byte text is readable, not MAC/IP only", () => {
   expect(v?.ok).toBe(true);
   expect(v?.payload).toEqual(text);
   expect(live._test.report()).toContain('as text "Hello World"');
+});
+
+test("live/offline parity on long payloads (NS-25, no fixed DATA timeout)", () => {
+  // NS-25 repros (80 B @200 ms, 40 B @400 ms) plus a short control and
+  // both worst cases (255 B @200/400 ms) through both decoders.
+  const cases: Array<[number[], number]> = [
+    [[1, 2, 3, 4, 5], 200],
+    [Array.from({ length: 80 }, (_, i) => i % 251), 200],
+    [Array.from({ length: 40 }, (_, i) => (i * 7) % 251), 400],
+    [Array.from({ length: 255 }, (_, i) => i % 256), 200],
+    [Array.from({ length: 255 }, (_, i) => (i * 13) % 256), 400],
+  ];
+  const SR = 16000; // offline render rate; DSP is rate-parametric
+  for (const [payload, sym] of cases) {
+    const off = decodeRecording(renderTones(tonesForPayload(payload, sym), SR), SR, sym);
+    expect(off.ok).toBe(true);
+    expect(off.payload).toEqual(payload);
+    const v = feedPlan(live.tonesForFrame(payload, sym), sym);
+    expect(v?.ok).toBe(true);
+    expect(v?.payload).toEqual(payload);
+  }
+});
+
+test("live missing END still times out (NS-25)", () => {
+  const tones = live.tonesForFrame([1, 2, 3], 200);
+  tones.pop(); // drop the END sync: DATA never closes on its own
+  expect(feedPlan(tones, 200)).toBeNull();
+  const thresh = live.C.noiseFloor + live.C.snrDb;
+  const deadline = 2 * (255 + 3) * 200 + 5000;
+  live._test.feed(deadline + 60000, false, 2500, thresh + 25, thresh, thresh - 20, thresh + 25);
+  const v = live._test.verdict();
+  expect(v?.ok).toBe(false);
+  expect(v?.error ?? "").toMatch(/data timeout/);
+});
+
+test("live pre-flight verdicts apply documented thresholds (NS-28)", () => {
+  expect(live.classifyRoute("AirPods Pro", null)).toEqual({ labelClass: "bluetooth", btSuspect: true });
+  expect(live.classifyRoute("USB Audio Device", null)).toEqual({ labelClass: "usb", btSuspect: false });
+  expect(live.classifyRoute("MacBook Pro Microphone", { channelCount: 1, sampleRate: 48000 }))
+    .toEqual({ labelClass: null, btSuspect: false });
+  expect(live.classifyRoute("unknown", { channelCount: 1, sampleRate: 8000 }).btSuspect).toBe(true);
+  expect(live.classifyRoute("unknown", null)).toEqual({ labelClass: null, btSuspect: false });
+  // USB wins over generic "headset" (not HFP audio); a bare headset
+  // label only suspects on lo-fi settings.
+  expect(live.classifyRoute("USB Headset", { channelCount: 1, sampleRate: 48000 }))
+    .toEqual({ labelClass: "usb", btSuspect: false });
+  expect(live.classifyRoute("External Headset", { channelCount: 2, sampleRate: 48000 }))
+    .toEqual({ labelClass: "headset", btSuspect: false });
+  expect(live.classifyRoute("External Headset", { channelCount: 1, sampleRate: 8000 }))
+    .toEqual({ labelClass: "headset", btSuspect: true });
+  expect(live.roomVerdict(-50).ok).toBe(true);
+  expect(live.roomVerdict(-45).ok).toBe(true);
+  expect(live.roomVerdict(-40).ok).toBe(false);
+  expect(live.clipVerdict(0, 0.5).ok).toBe(true);
+  expect(live.clipVerdict(0.002, 1).ok).toBe(false);
+  expect(live.bandVerdict(-70, -70).ok).toBe(true); // quiet room: nothing in-band to matter
+  expect(live.bandVerdict(-40, -60).ok).toBe(false); // loud + elevated in-band: whine
+  expect(live.bandVerdict(-40, -30).ok).toBe(true); // loud room, but energy is elsewhere
+});
+
+test("live report carries session acoustic block + hint (NS-28)", () => {
+  const v = feedPlan(live.tonesForFrame(TWIN1_PAYLOAD, 200), 200);
+  expect(v?.ok).toBe(true);
+  const report = live._test.report();
+  expect(report).toContain("- route: none (synth feed)");
+  expect(report).toContain("- session: listening ");
+  expect(report).toContain("attempts 1 · verified 1 · dropouts 0 · hidden 0×");
+  expect(report).toContain(
+    "- signal: floor -55–-55 dB · loudest sync/data -18/-18 dB · est SNR 37 dB · clip peak n/a",
+  );
+  expect(report).toContain("- band: n/a (synth feed)");
+  expect(report).toContain("- hint: none");
+  expect(report).toContain("- sender: (not given");
+  expect(report).not.toContain("### last checks");
+});
+
+test("live hint names sym mismatch on loud sweep failures (NS-28)", () => {
+  const bad = live.tonesForFrame(PIERCE_PAYLOAD, 400);
+  maskSweep0(bad, 400);
+  shiftTone(bad, 2, 100);
+  expect(feedPlan(bad, 400)?.ok).toBe(false);
+  expect(live._test.report()).toContain("- hint: Signal present but symbol length may mismatch");
 });
 
 test("live report keeps the previous attempt across one reset", () => {

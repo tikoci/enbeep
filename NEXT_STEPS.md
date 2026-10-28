@@ -10,7 +10,7 @@ item, update this file in the same change that does the work.
    [docs/TESTING.md](docs/TESTING.md) (how to test/report).
 2. Re-verify the baseline before changing anything:
    `bun install && bun test && bunx tsc --noEmit && bun run lint`
-   (baseline at last update: 59 pass, tsc clean, lint clean).
+   (baseline at last update: 64 pass, tsc clean, lint clean).
 3. Work the highest-priority `ready` item. One item per change.
 4. When done, move the item to **Done** with date + evidence (test output,
    commit, capture file, or URL). Never delete an item silently; a dropped
@@ -28,13 +28,32 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   docs/TESTING.md). Repo not yet published to GitHub; the pre-publish
   worktree is consolidated into local commits on `main`, unpushed (no
   remote configured). NS-20 still governs the public history decision.
-- Try tab (NS-23 done): `live.html` opens on Try it — RouterOS load/play
-  panel (`$enbeepText`) + editable speaker sender with byte validation;
+- Try tab: `live.html` opens on Try it — RouterOS load/play panel
+  (`$enbeepText`) + editable speaker sender with byte validation;
   11-byte payloads show their text reading; the diagnostics report keeps
-  the previous session across one reset. `src/` is v2 codec only; the
-  retired batch tools moved to `decode/`. Speaker/mic device pairs still
-  need trials (NS-22). `.scratch/` is the ignored local retention area
-  (AGENTS.md).
+  the previous session across one reset. Router step offers paste vs
+  fetch as two labelled options (script viewer + copy; same-origin
+  one-liner, CHR-verified, experimental pending NS-5) and ends with a
+  Decode handoff button. DATA deadline scales with the worst-case frame
+  (NS-25 done). `src/` is v2 codec only; the retired batch tools moved
+  to `decode/`. Speaker/mic device pairs still need trials (NS-22).
+  `.scratch/` is the ignored local retention area (AGENTS.md).
+- Encoder (hardened 2026-10-28, now `encode/enbeep.rsc`): `:global`
+  re-declarations per the scripting manual, fail-fast `enbeep:` input
+  validation, unload one-liner; CHR 7.26beta3 dry-run matrix green
+  (paste, API-load, `/import`, `[:parse]`, fetch one-liner E2E). 7.16
+  `/import` re-test still needs hardware. Named parameters + defaults
+  are a non-blocking inbox idea.
+- Pages gating (NS-21 change landed, demo pending NS-1): Pages deploys
+  only on same-repo push CI success via `workflow_run`, pinned to the
+  validated SHA, with no manual dispatch bypass; actionlint clean.
+  First-publish cycle still has to show a failed revision skipping
+  deploy.
+- Diagnostics (NS-28 done): Run checks probes room/clip/band + applied
+  mic settings with BT steerage; reports carry the session acoustic
+  block, a live-mirrored likely-cause hint, an optional sender note,
+  and the last check rows. iPhone trial (NS-4) will use an external
+  MiC; internal mic stays the known-hard case.
 - Public demo direction (owner clarification): Pages is a primary way
   people will try this. The accurate current README is not a product
   spec or the finished public presentation; NS-24 rewrites it once the
@@ -50,30 +69,47 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   do not rewrite existing history as routine cleanup. Done when: the
   publication history is chosen, its text/credentials reviewed, and a
   fresh LFS checkout runs the gates without relying on local files.
+  Analysis 2026-10-28: 13 commits, single branch, no remote (a pre-push
+  migrate is externally free); history secret-scan clean, no
+  scratch/frames/keys committed; working-tree audio already LFS. Awaiting
+  the owner's preservation-vs-clean choice + push (NS-1).
 - [ ] **NS-21 Gate Pages deployment on validation** · `ready`
-  Current CI and Pages workflows independently run on push to main, so
-  a failed CI run can still deploy. Done when: Pages only deploys a
-  validated revision, including browser/harness checks; demonstrate a
-  failing revision cannot deploy. Keep this as a workflow change rather
-  than claiming a local smoke test proves GitHub deployment works.
+  Workflow change landed 2026-10-28 (actionlint clean, revised after
+  review): Pages triggers on CI completion via `workflow_run`, deploys
+  only when the conclusion is `success` on a same-repo push event, and
+  checks out the validated SHA. No `workflow_dispatch` (it would bypass
+  the gate; recovery is a CI re-run). Residual: demonstrate a failing
+  revision cannot deploy — needs the NS-1 remote (watch the first
+  publish cycle; a failed main run must skip deploy). Keep this as a
+  workflow change rather than claiming a local smoke test proves GitHub
+  deployment works.
 - [ ] **NS-1 Publish and prove the public surfaces** · `ready`
   Push to GitHub; enable Actions + Pages. Done when: CI is green on
   `main`, the Pages URL serves `/` (live decoder), `/harness.html`, and
-  `/enbeep-frame.rsc` (fetch each, record the URL here).
-  No Git remote is configured in this checkout yet. After publishing,
-  feed verified demo/issue URLs into the public README pass (NS-24).
+  `/enbeep.rsc` (fetch each, record the URL here).
+  No Git remote is configured in this checkout yet. During publication,
+  apply and verify the GitHub settings in
+  [CONTRIBUTING.md](CONTRIBUTING.md#github-setup-at-publication).
+  Feed verified demo/issue URLs into the public README pass (NS-24).
 ## P0 — demo truth (claims we must not make unverified)
 
 - [ ] **NS-4 First over-air iPhone capture** · `needs-hardware`
-  Pages live decoder on iPhone Safari ← real router frame. Done when:
-  a WAV + decode JSON + report (docs/TESTING.md §4) is filed, pass or
-  fail. A fail spawns a new item with the capture; it does not reopen NS-4.
+  Pages live decoder on iPhone Safari ← real router frame. Owner will
+  trial with an external MiC after NS-28; the phone-internal mic is the
+  known-hard case (voice processing, BT reroute, browser mic stack).
+  Record which input in the report either way. Done when: a WAV +
+  decode JSON + report (docs/TESTING.md §4) is filed, pass or fail. A
+  fail spawns a new item with the capture; it does not reopen NS-4.
 - [ ] **NS-5 `/tool fetch` load experiment** · `needs-hardware`
-  Test whether a fetched `.rsc` loaded via
-  `[:parse [/file get enbeep-frame.rsc contents]]` behaves like a CLI
-  paste (nested globals work) on CHR + one real 7.16 box. Done when:
-  result is written into encode/README.md as verified or rejected.
-  Until then, no doc may present fetch-loading as working.
+  Test whether the one-liner
+  `[:parse ([/tool/fetch url="..." output=user as-value]->"data")]`
+  behaves like a CLI paste (nested globals work, no flash file) on CHR
+  + one real 7.16 box. CHR half done 2026-10-28 for both the one-liner
+  and the older fetch-to-file + `[:parse [/file/get ... contents]]`
+  form (FRAME len=5 f1=250 f2=170, full T: trace); encode/README.md
+  recipe C records the one-liner as CHR-verified. Residual: one real
+  7.16 box. Until then, no doc may present fetch-loading as
+  hardware-verified.
 
 ## P1 — public demo experience
 
@@ -86,6 +122,33 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   constrain the intended product or replace docs/SPEC.md. Done when:
   each advertised action is available in the deployed code and the
   instructions match the page, with experimental limits still clear.
+
+- [ ] **NS-29 File-fed live-listen verification** · `ready`
+  `tick()`'s mic-path code (clip scan, band accumulation, dropout
+  counting, floor learning) never executes in any test: bun tests drive
+  `processFrame` via `_test`, and smoke self-tests run synth-gated.
+  Feed a rendered v2 frame WAV as the fake mic, press Start Listening
+  for real, and assert a mic-path verify of the known frame plus
+  populated (non-n/a) session/band lines and zero dropouts. Done when:
+  smoke asserts that end-to-end mic-path verify. Closes the last
+  unexecuted-lines gap before hardware trials; do before the final
+  hardware pass so a tick bug can't waste it.
+- [ ] **NS-27 Named encoder parameters + defaults** · `ready` (low, non-blocking)
+  Accept `$enbeepText text="Hello" symbol=200ms` style named arguments
+  with defaults for sym/tone alongside the positional
+  `text sym tone dry` form (positional keeps working; decide the exact
+  names before implementing). Done when: both call styles dry-run
+  identically on CHR, validation errors stay prefixed and fail-fast,
+  and encode/README.md documents the names. Not a publish gate.
+- [ ] **NS-26 Scheduler autoload trial** · `needs-hardware`
+  Check whether the encoder functions can autoload at boot via
+  `/system scheduler` (start-up event running the fetch one-liner or a
+  stored script) and stay callable from an admin terminal. Globals are
+  per-user, so a scheduler-owned load may not be visible where the user
+  calls it — that is the question. Owner-volunteered: run on a real
+  box, report the scheduler entry + which user sees the globals. Not
+  needed for Try It. Done when: encode/README.md records the working
+  recipe or the per-user limitation with evidence.
 
 ## P2 — refine the scheme (needs outside hardware)
 
@@ -122,6 +185,85 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
 
 ## Done
 
+- 2026-10-28 — NS-28 review follow-ups (4 P2s): synth sessions no
+  longer report mic-path clip/band (sessionIsSynth gate); Run checks
+  probes the selected mic (deviceId); route line keeps the track's own
+  label across picker changes/Stop; classifier ranks USB over generic
+  headset and only suspects bare-headset labels on lo-fi settings.
+  Regression cover: smoke A asserts clip/band n/a after Self-test; bun
+  classifier cases; codex repro
+  (`.scratch/2026-10-28-ns28-review/repro.ts`) confirms n/a + saved
+  label + deviceId in constraints (its 7-row wait times out on the
+  failure path by design — no mic, no probe rows). Evidence: 64 bun
+  pass, tsc/lint clean, browser A/B/C1/C2/E/D green. Working tree only.
+- 2026-10-28 — NS-28 pre-flight + no-harness reports: 2 s mic probe feeds
+  `mic` (peak/RMS/applied settings/BT flag), `room` (resting p10),
+  `clip`, `band` (power-mean in-vs-out) rows; report gains route,
+  session (elapsed/dropouts/hidden), signal (floor range, loudest,
+  SNR est, clip), band, live-mirrored `hint:` (BT → mic-path → loud
+  room → sym mismatch), sender note, and embedded last-checks; DIAG.md
+  maps the new fields to cases 1–6 with thresholds; TESTING §4 steers
+  reporters to the sender note + checks. No new `api/frame` payload.
+  Evidence: 64 bun pass (threshold units + report/hint integration),
+  browser A/B/C1(file-fed quiet all-pass)/C2(loud in-band flags
+  room+band)/E/D green, tsc/lint clean. Working tree only.
+- 2026-10-28 — Owner-requested GitHub collaboration policy:
+  CONTRIBUTING.md documents short-lived branches into main, focused PRs,
+  three required CI jobs, maintainer review with zero required external
+  approvals, squash merge + branch cleanup, and Pages after validated
+  main pushes. Issues remain reports/discussion; NEXT_STEPS stays the
+  sole tracker. Added a short PR template and README/agent links. NS-1
+  includes the settings checklist; no GitHub settings applied locally.
+  Evidence: final required gate 61 pass + tsc/lint clean; 56 local
+  Markdown link targets exist; diff whitespace clean. Documentation only.
+- 2026-10-28 — Owner + review follow-ups: encoder renamed to
+  `encode/enbeep.rsc` (all refs); fetch recipe is the CHR-verified
+  single-expression one-liner (no flash file); Try-tab router step split
+  into labelled paste/fetch options with the `/import` aside removed
+  from the human path; Try tab ends with a Decode handoff button; Pages
+  gate tightened (no `workflow_dispatch` bypass, same-repo push source
+  guard); DIAG.md `data timeout` entry rewritten for the NS-25
+  deadline. New tracking: NS-26 scheduler autoload trial
+  (owner-volunteered hardware), inbox idea for named encoder parameters.
+  Evidence: 61 bun pass, tsc/lint clean, browser A–E green, actionlint
+  clean, CHR one-liner E2E. Working tree only.
+- 2026-10-28 — NS-25 live DATA deadline scales with the frame: worst-case
+  `2*(255+3)*symMs + 5 s` replaces the fixed 30 s (no early-LEN shortcut:
+  slot-0 masking makes the first tones untrustworthy). New
+  `test/live.test.ts` parity (5 B control, 80 B @200 ms, 40 B @400 ms,
+  255 B @200/400 ms through both decoders) + missing-END timeout test.
+  SPEC limits section now claims the full 1..255 range synthetically and
+  keeps long over-air frames as untested. Evidence: 61 bun pass, browser
+  A–E green. Working tree only.
+- 2026-10-28 — Owner-requested encoder hardening for a forum audience:
+  `:global` re-declarations per the scripting manual (the documented fix
+  for the 7.16 `/import` nesting failure; centrs `explain` still warns on
+  the 5 substitution-headed nested calls, as it must offline),
+  fail-fast `enbeep:` validation (payload 1..255, sym/tone times with a
+  50 ms..10 s sanity range — bare `200` would silently mean 200 s — tone
+  ≤ sym, friendly interface/address errors), unload one-liner, integer
+  division note. CHR 7.26beta3 matrix green: identical tone plan before/
+  after, all 8 error cases fail loud, paste/API-load/`/import`/parse-load
+  all nest, real `/tool fetch` E2E. encode/README.md gained recipe C +
+  validation notes. 7.16 hardware re-test still open. Working tree only.
+- 2026-10-28 — Owner-requested Pages install UX: Try-tab router step now
+  shows the script in-page (lazy fetch + copy) with a plain-file
+  fallback link, plus a same-origin `/tool fetch` one-liner computed
+  from `document.baseURI` (labelled experimental, CHR-verified, pending
+  NS-5). Evidence: browser A–E green, zero pageerrors, Try-panel
+  screenshot reviewed. Working tree only.
+- 2026-10-28 — Owner-requested docs/code-readability review (small fixes
+  before publication; no history rewrite or deployment): README names
+  `:beep` → nearby mic, hobby scope and one-way delivery; SPEC explains
+  the encoding choices with Wikipedia background links, removes the
+  unsupported fixed Fletcher false-accept probability, and distinguishes
+  wire limits from live timeout/ASCII-preview limits. Added agent code
+  reading order; aligned loading, triage, capture and LFS notes. Larger
+  new finding is NS-25; NS-20/21 remain publication gates. Evidence:
+  final required gate 59 pass + tsc/lint clean; browser A–E green;
+  46 local Markdown links resolve; diff whitespace clean. Deterministic
+  timeout reproductions retained locally in
+  `.scratch/2026-10-28-doc-review/`. Documentation changes only.
 - 2026-10-28 — NS-23 Try tab + failure/reporting: `live.html` opens on
   "Try it" (RouterOS load/dry-run/play panel with copyable `$enbeepText`
   commands + editable speaker sender, 1..255 byte validation, air-time

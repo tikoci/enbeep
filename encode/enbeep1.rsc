@@ -1,4 +1,4 @@
-# LEGACY / BROKEN on RouterOS 7 — do not use. Superseded by enbeep-frame.rsc.
+# LEGACY / BROKEN on RouterOS 7 — do not use. Superseded by enbeep.rsc.
 # (:beep is non-blocking in RouterOS 7; this file assumes RouterOS 6 timing.)
 # Usage: [$beepSend "HELLO"]
 :global enbeeo do={

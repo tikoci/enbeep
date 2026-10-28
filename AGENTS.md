@@ -3,6 +3,9 @@
 Start at [NEXT_STEPS.md](NEXT_STEPS.md). It is the only work tracker:
 pick the top `ready` item, do it, update the file in the same change.
 
+Follow [CONTRIBUTING.md](CONTRIBUTING.md) for branches, issues, PRs,
+required CI checks, merging, and Pages deployment policy.
+
 Canonical docs (do not duplicate their content elsewhere):
 
 - [docs/SPEC.md](docs/SPEC.md) — v2 wire format. Spec wins over code.
@@ -27,6 +30,16 @@ decoder mirrors the offline codec including slot-0 repair
 (`test/live.test.ts` drives the real state machine via
 `window.__enbeep._test`); never present Self-test or `/tool fetch`
 loading as hardware-verified.
+
+Code reading order after the canonical docs: `encode/enbeep.rsc`
+(sender), `src/frame.ts` (tone plan + offline codec), then `live.html`
+(`processFrame` → `finishSweep` / `finishData`). The live page is a
+self-contained receiver with its own Web Audio detector and state
+machine; it does not import the offline codec. The WAV harness does,
+through `web/wav-entry.ts`. For protocol work, check both
+`test/frame.test.ts` and `test/live.test.ts`; `test/samples.test.ts`
+locks the real-capture verdicts. `index.ts` is only a pointer to the
+actual entry points, not the app implementation.
 
 Use `mkdir -p .scratch` for local work worth keeping between sessions:
 captures, analysis, trial scripts, and agent handoff notes. The whole

@@ -1,4 +1,4 @@
-// frame.ts — enbeep v2 frame codec. Mirrors encode/enbeep-frame.rsc.
+// frame.ts — enbeep v2 frame codec. Mirrors encode/enbeep.rsc.
 // Layout: PRE(2s sync + 16-tone sweep) · SEP(1s) · LEN+payload+FLETCHER16 · END(1s)
 // (No SOF/EOF tones: 1-tone 4000 Hz markers merge into the adjacent 1s syncs.
 // v2 replaces the v1 byte-sum with Fletcher-16 after a real 1/256-class

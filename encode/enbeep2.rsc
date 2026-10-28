@@ -1,4 +1,4 @@
-# LEGACY / BROKEN on RouterOS 7 — do not use. Superseded by enbeep-frame.rsc.
+# LEGACY / BROKEN on RouterOS 7 — do not use. Superseded by enbeep.rsc.
 # (Its +100 Hz / delay-rounding notes did not reproduce — see README measured findings.)
 # Usage: [$beepSend "HELLO"]
 :global enbeeo do={

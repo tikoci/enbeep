@@ -4,7 +4,7 @@ test: ## Bun unit + archive regression tests
 	bun test
 
 lint-rsc: ## Offline syntax gate over the RouterOS encoder (needs centrs)
-	centrs explain --file encode/enbeep-frame.rsc
+	centrs explain --file encode/enbeep.rsc
 
 test-py: ## Legacy Python analyzer tests (old calibration format)
 	.venv/bin/python -m unittest discover -s decode -p 'test_*.py' -q

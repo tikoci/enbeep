@@ -2,7 +2,9 @@
 
 Can a MikroTik router introduce itself by beeping its MAC and IP address?
 enbeep is a **fun, experimental acoustic modem** that tries exactly that:
-a RouterOS piezo plays tones, and a web page listens and checks the bytes.
+a RouterOS script uses `:beep` to play data through the router's piezo,
+and a web page on a nearby laptop or phone listens through its microphone
+and checks the bytes. It is a hobby project, not a production tool.
 It uses MFSK-16 (16 pitches, four bits per tone), a calibration sweep, and
 a Fletcher-16 checksum. A typical announcement takes about 13 seconds.
 
@@ -15,8 +17,23 @@ monitoring, discovery, or anything operational.
 
 The receiver shows the interface MAC, a selected IPv4 address, and CPU
 load at transmit time. Those values travel audibly, without a network
-connection between sender and receiver. Part of the TIKOCI experiments;
-not affiliated with or endorsed by MikroTik.
+connection between sender and receiver. Each transmission is one-way;
+there is no acknowledgement or automatic retry. Part of the TIKOCI
+experiments; not affiliated with or endorsed by MikroTik.
+
+## How the beeps carry data
+
+Each tone represents one hexadecimal digit: two tones make a byte. The
+sender starts with a long sync beep and a sweep through all 16 pitches
+so the receiver can check the signal and estimate its pitch offset. Then
+it sends the length, the message bytes, and a checksum, ending with
+another sync beep. The receiver checks the whole frame before calling
+it verified.
+
+The choices favor a small, understandable RouterOS script over speed.
+The [scheme explained](docs/SPEC.md#why-this-scheme) covers the trade-offs
+and links to Wikipedia for MFSK, nibbles, and acoustic interference; the
+rest of that document specifies the exact wire format.
 
 ## Open the web interface
 
@@ -90,11 +107,13 @@ from real device pairs.
    or its own localhost server as described above.
 2. On the **receiver**, open **Decode**, choose **200 ms** and **Start
    Listening**. Put it near the sender, with its page visible.
-3. On the **sender**, open **Try it**, type a message (or keep `Hello`),
-   and press **Play message**. It plays the message through the speaker
+3. On the **sender**, open **Try it**, type a short ASCII message (or keep
+   `Hello`), and press **Play message**. It plays the message through the speaker
    while also checking it internally. Use the built-in speaker at a
    moderate volume, with headphones/Bluetooth disconnected. `Hello`
-   takes about 10 seconds plus a short wait; longer messages longer.
+   takes about 10 seconds plus a short wait; longer messages take longer.
+   See the [current message limits](docs/SPEC.md#current-implementation-limits)
+   before trying long messages or non-ASCII text.
 4. Look at the **receiver's** result: it shows the message text plus hex.
    A pass on the sender alone proves only its internal decoder. It does
    not prove sound reached the other device. Both pages must use the
@@ -156,7 +175,8 @@ The current structure is deliberately small:
 | `decode/`, `samples/legacy/` | Retired experiments + batch tools; outside the v2 path |
 
 Start agent/contributor work at [AGENTS.md](AGENTS.md) and
-[NEXT_STEPS.md](NEXT_STEPS.md), the sole work tracker. The
+[NEXT_STEPS.md](NEXT_STEPS.md), the sole work tracker. Branches, PRs,
+and CI policy are in [CONTRIBUTING.md](CONTRIBUTING.md). The
 [wire spec](docs/SPEC.md) is authoritative; keep both decoders and the
 encoder aligned. Use ignored `.scratch/` for work worth retaining locally
 between sessions; it is not part of a clone or a published test result.

@@ -1,4 +1,5 @@
 {
+  "exclude": ["node_modules", ".scratch", "out", "dist", "_site"],
   "compilerOptions": {
     // Environment setup & latest features
     "lib": ["ESNext"],

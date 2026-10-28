@@ -1,5 +1,0 @@
-{
-  "extends": "biome:recommended",
-  "files": ["**/*.{ts,tsx,js,jsx,md}"],
-  "ignoreFiles": ["node_modules", "dist", "build"]
-}

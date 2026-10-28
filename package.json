@@ -4,21 +4,25 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "lint": "bunx biome check .",
-    "format": "bunx biome format .",
+    "lint": "bunx @biomejs/biome check src test serve.ts index.ts web rig decode",
+    "format": "bunx @biomejs/biome format src test serve.ts index.ts web rig decode",
     "typecheck": "bunx tsc --noEmit",
-    "convert": "bun run src/convert-audio.ts",
-    "decode": "bun run src/decode-samples.ts",
+    "convert": "bun run decode/convert-audio.ts",
+    "decode": "bun run decode/decode-samples.ts",
     "analyze": "python3 decode/analyze_recording.py",
     "test:py": "python3 -m unittest discover -s decode -p 'test_*.py' -q",
     "test": "bun test",
+    "test:browser": "bun test/browser-smoke.ts",
     "frame:decode": "bun run src/decode.ts",
+    "rig:capture": "bun run rig/capture.ts",
+    "rig:analyze": "bun run rig/analyze.ts",
     "serve": "bun run serve.ts",
     "serve:tls": "bun run serve.ts --tls"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
     "@types/bun": "latest",
-    "biome": "latest",
+    "playwright": "^1.64.1",
     "typescript": "^5"
   },
   "peerDependencies": {

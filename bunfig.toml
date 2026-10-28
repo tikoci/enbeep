@@ -1,0 +1,3 @@
+[test]
+# Keep retained local experiments out of the regression suite.
+root = "./test"

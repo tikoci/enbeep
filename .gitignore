@@ -1,6 +1,9 @@
 # dependencies (bun install)
 node_modules
 
+# local experiments and agent handoffs retained between sessions
+/.scratch/
+
 # python analysis env (project-local, re-created via `python3 -m venv .venv`)
 .venv
 
@@ -14,6 +17,7 @@ frames.jsonl
 # output
 out
 dist
+_site
 *.tgz
 
 # code coverage

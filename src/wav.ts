@@ -1,4 +1,6 @@
-// wav.ts — minimal PCM WAV read/write (16-bit, mono or stereo). Zero deps.
+// wav.ts — minimal PCM WAV read (16/32-bit) + write (16-bit), mono or
+// stereo. Zero deps. 32-bit read exists for USB-mic native captures
+// (e.g. Apogee MiC via arecord S32_LE); fixtures stay 16-bit.
 export interface Wav {
   sampleRate: number;
   channels: number;
@@ -34,16 +36,18 @@ export function readWav(buf: Uint8Array): Wav {
     }
     off += 8 + size + (size % 2);
   }
-  if (fmtCode !== 1 || fmtBits !== 16) {
+  if (fmtCode !== 1 || (fmtBits !== 16 && fmtBits !== 32)) {
     throw new Error(`unsupported WAV format code=${fmtCode} bits=${fmtBits}`);
   }
   if (!dataStart || !fmtRate || !fmtChannels) throw new Error("bad WAV chunks");
-  const frames = Math.floor(dataLen / (fmtChannels * 2));
+  const bytesPer = fmtBits / 8;
+  const frames = Math.floor(dataLen / (fmtChannels * bytesPer));
   const samples = new Float64Array(frames);
   for (let i = 0; i < frames; i++) {
     let acc = 0;
     for (let c = 0; c < fmtChannels; c++) {
-      acc += v.getInt16(dataStart + (i * fmtChannels + c) * 2, true);
+      const o = dataStart + (i * fmtChannels + c) * bytesPer;
+      acc += bytesPer === 2 ? v.getInt16(o, true) : v.getInt32(o, true) / 65536;
     }
     samples[i] = acc / fmtChannels / 32768;
   }

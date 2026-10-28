@@ -1,6 +1,6 @@
 // decode.ts — offline frame decoder CLI: bun src/decode.ts --file x.wav --sym 200
-import { readWav } from "./wav";
 import { decodeRecording } from "./frame";
+import { readWav } from "./wav";
 
 const args = process.argv.slice(2);
 const get = (k: string, dflt: string): string => {

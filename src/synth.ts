@@ -1,6 +1,6 @@
 // synth.ts — render tone lists to idealized WAV (test fixtures, no hardware).
-import { writeWav } from "./wav";
 import type { Tone } from "./frame";
+import { writeWav } from "./wav";
 
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;

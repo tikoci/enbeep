@@ -8,7 +8,7 @@
 // (survivors must be exactly 1..15); data repairs an erased LEN hi-nibble
 // structurally (LEN is forced by frame size) under Fletcher-16. Any other
 // shape still rejects.)
-import { BASE_FREQ, DATA_HI, DATA_LO, STEP, SYNC_FREQ, findSyncs, tonePeak } from "./dsp";
+import { BASE_FREQ, DATA_HI, DATA_LO, findSyncs, STEP, SYNC_FREQ, tonePeak } from "./dsp";
 
 export interface Tone {
   freq: number;
@@ -206,7 +206,7 @@ export function decodeRecording(
         // Success adopts the repaired verdict; failure keeps the original
         // byte-count verdict (message-stable: v1 format breaks still read
         // "byte count", never "checksum mismatch").
-        if (re && re.ok) return re;
+        if (re?.ok) return re;
       }
       return fail({ ...margined, len }, `byte count ${bytes.length} != len+3 for len=${len}`);
     }

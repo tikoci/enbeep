@@ -1,9 +1,9 @@
 // frame.test.ts — anchor tests for the v1 frame codec (no hardware needed).
 import { expect, test } from "bun:test";
-import { readWav, writeWav } from "../src/wav";
 import { peakFreq } from "../src/dsp";
 import { decodeRecording, tonesForPayload } from "../src/frame";
 import { renderTones } from "../src/synth";
+import { readWav, writeWav } from "../src/wav";
 
 const SR = 48000;
 
@@ -16,6 +16,43 @@ test("wav round-trips PCM16", () => {
   expect(back.sampleRate).toBe(SR);
   expect(back.samples.length).toBe(5);
   for (let i = 0; i < 5; i++) expect(back.samples[i] ?? NaN).toBeCloseTo(s[i] ?? NaN, 3);
+});
+
+test("wav reads PCM32 (MiC-native arecord format)", () => {
+  // writeWav only writes 16-bit, so build the S32_LE mono RIFF by hand.
+  const vals = [0, 0.5, -0.5, 1, -1];
+  const data = new Uint8Array(vals.length * 4);
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  for (let i = 0; i < vals.length; i++) {
+    dv.setInt32(i * 4, Math.round((vals[i] ?? 0) * 2147483647), true);
+  }
+  const head = new Uint8Array(44);
+  const hv = new DataView(head.buffer, head.byteOffset, head.byteLength);
+  const wstr = (o: number, s: string) => {
+    for (let i = 0; i < s.length; i++) head[o + i] = s.charCodeAt(i);
+  };
+  wstr(0, "RIFF");
+  hv.setUint32(4, 36 + data.length, true);
+  wstr(8, "WAVE");
+  wstr(12, "fmt ");
+  hv.setUint32(16, 16, true);
+  hv.setUint16(20, 1, true);
+  hv.setUint16(22, 1, true);
+  hv.setUint32(24, SR, true);
+  hv.setUint32(28, SR * 4, true);
+  hv.setUint16(32, 4, true);
+  hv.setUint16(34, 32, true);
+  wstr(36, "data");
+  hv.setUint32(40, data.length, true);
+  const buf = new Uint8Array(44 + data.length);
+  buf.set(head, 0);
+  buf.set(data, 44);
+  const back = readWav(buf);
+  expect(back.sampleRate).toBe(SR);
+  expect(back.samples.length).toBe(vals.length);
+  for (let i = 0; i < vals.length; i++) {
+    expect(back.samples[i] ?? NaN).toBeCloseTo(vals[i] ?? NaN, 3);
+  }
 });
 
 test("peakFreq finds a pure tone", () => {

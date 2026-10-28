@@ -1,8 +1,8 @@
 // samples.test.ts — archive regression: every real bigdude recording decodes
 // as it did when captured. Locks the margin-reject behavior.
 import { expect, test } from "bun:test";
-import { readWav } from "../src/wav";
 import { decodeRecording } from "../src/frame";
+import { readWav } from "../src/wav";
 
 const MAC_IP = [116, 77, 40, 56, 179, 205, 172, 22, 74, 254];
 
@@ -45,7 +45,7 @@ for (const name of ["bigdude-v2-200a.wav", "bigdude-v2-gap-b.wav"]) {
     const res = await decodeSample(name, 200);
     expect(res.problems).toEqual([]);
     expect(res.ok).toBe(true);
-    expect(res.payload!.slice(0, 10)).toEqual(MAC_IP);
+    expect(res.payload?.slice(0, 10)).toEqual(MAC_IP);
     expect(res.sum).toHaveLength(2);
     expect(res.sumOk).toBe(true);
     expect(res.maxDfHz).toBeLessThan(50);
@@ -64,7 +64,7 @@ test("bigdude-v2-200micB-c decodes exact under late windows", async () => {
   const res = await decodeSample("bigdude-v2-200micB-c.wav", 200);
   expect(res.problems).toEqual([]);
   expect(res.ok).toBe(true);
-  expect(res.payload!.slice(0, 10)).toEqual(MAC_IP);
+  expect(res.payload?.slice(0, 10)).toEqual(MAC_IP);
   expect(res.sumOk).toBe(true);
 });
 
@@ -74,7 +74,7 @@ for (const name of ["bigdude-v2-200micB-d.wav", "bigdude-v2-200micB-e.wav"]) {
     const res = await decodeSample(name, 200);
     expect(res.problems).toEqual([]);
     expect(res.ok).toBe(true);
-    expect(res.payload!.slice(0, 10)).toEqual(MAC_IP);
+    expect(res.payload?.slice(0, 10)).toEqual(MAC_IP);
     expect(res.sumOk).toBe(true);
   });
 }
@@ -83,7 +83,7 @@ test("bigdude-v2-300micB-b decodes exact at 300 ms", async () => {
   const res = await decodeSample("bigdude-v2-300micB-b.wav", 300);
   expect(res.problems).toEqual([]);
   expect(res.ok).toBe(true);
-  expect(res.payload!.slice(0, 10)).toEqual(MAC_IP);
+  expect(res.payload?.slice(0, 10)).toEqual(MAC_IP);
   expect(res.sumOk).toBe(true);
 });
 
@@ -102,7 +102,7 @@ for (const name of [
   test(`${name} is correctly rejected`, async () => {
     const res = await decodeSample(name, 200);
     expect(res.ok).toBe(false);
-    expect(res.payload!.slice(0, 10)).toEqual(MAC_IP); // address always survives
+    expect(res.payload?.slice(0, 10)).toEqual(MAC_IP); // address always survives
   });
 }
 
@@ -117,6 +117,7 @@ for (const [name, sym] of [
   ["pierce-h2.wav", 400],
   ["pierce-m1.wav", 400],
   ["pierce-m2.wav", 400],
+  ["pierce-r1.wav", 400], // 20 cm close-mic via rig, Oct 2026
 ] as Array<[string, number]>) {
   test(`${name} decodes exact via slot-0 repair`, async () => {
     const res = await decodeSample(name, sym);
@@ -124,7 +125,7 @@ for (const [name, sym] of [
     expect(res.ok).toBe(true);
     expect(res.sweepDropout).toBe(true);
     expect(res.dataErasure).toBe(true);
-    expect(res.payload!.slice(0, 10)).toEqual(PIERCE_MAC_IP);
+    expect(res.payload?.slice(0, 10)).toEqual(PIERCE_MAC_IP);
     expect(res.sumOk).toBe(true);
   });
 }

@@ -1,5 +1,8 @@
-import { readdir } from "fs/promises";
-import { basename, extname, join } from "path";
+// convert-audio.ts — RETIRED batch tool (macOS afconvert .m4a→.wav for the
+// legacy corpus). Lives in decode/ with the other retired experiments, not
+// in src/ with the v2 codec. Run via `bun run convert`.
+import { readdir } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
 
 const samplesDir = new URL("../samples", import.meta.url).pathname;
 

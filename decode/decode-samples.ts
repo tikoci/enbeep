@@ -1,8 +1,11 @@
-import { readdir } from "fs/promises";
-import { basename, extname, join } from "path";
+// decode-samples.ts — RETIRED batch tool (runs decode/debeep.*.py over every
+// samples/*.wav). Lives in decode/ with the retired experiments, not in src/
+// with the v2 codec. Run via `bun run decode`.
+import { readdir } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
 
 const samplesDir = new URL("../samples", import.meta.url).pathname;
-const decodeDir = new URL("../decode", import.meta.url).pathname;
+const decodeDir = new URL(".", import.meta.url).pathname;
 
 async function main() {
   const sampleEntries = await readdir(samplesDir, { withFileTypes: true });

@@ -30,6 +30,11 @@ decoder mirrors the offline codec including slot-0 repair
 (`test/live.test.ts` drives the real state machine via
 `window.__enbeep._test`); never present Self-test or `/tool fetch`
 loading as hardware-verified.
+The opt-in `bun run test:chr` exercises the actual sender through a
+patched CHR virtual speaker into the offline decoder; see
+[docs/CHR-BEEP.md](docs/CHR-BEEP.md) for setup and limits. Run it for
+encoder/harness changes. It does not establish physical acoustics or
+live-browser compatibility, and its separate workflow is not a Pages gate.
 
 Code reading order after the canonical docs: `encode/enbeep.rsc`
 (sender), `src/frame.ts` (tone plan + offline codec), then `live.html`

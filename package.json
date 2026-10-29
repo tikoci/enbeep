@@ -13,6 +13,7 @@
     "test:py": "python3 -m unittest discover -s decode -p 'test_*.py' -q",
     "test": "bun test",
     "test:browser": "bun test/browser-smoke.ts",
+    "test:chr": "ENBEEP_CHR_TEST=1 bun test test/chr-beep.test.ts",
     "frame:decode": "bun run src/decode.ts",
     "rig:capture": "bun run rig/capture.ts",
     "rig:analyze": "bun run rig/analyze.ts",

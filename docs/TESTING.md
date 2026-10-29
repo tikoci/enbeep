@@ -6,7 +6,7 @@ scheme instead of becoming anecdotes.
 
 ## What is verified today (Oct 2026)
 
-| Path | Hardware | Result |
+| Path | Setup | Result |
 |---|---|---|
 | Offline decode | RB1100AHx4 (7.26) → USB mic, 200/300 ms | Exact, Fletcher ✓ |
 | Offline decode | RB953GS-5HnT (7.16.2, metal case) → USB mic, 200/400 ms | Exact via slot-0 repair |
@@ -14,6 +14,7 @@ scheme instead of becoming anecdotes.
 | Live decode | iPhone Safari | **Self-test only** — see below |
 | Live decode over air | iPhone Safari ← router piezo | **Not yet verified. Top ask.** |
 | Two-device browser demo | Speaker → another device's live mic | Walkthrough available; **no recorded device-pair verification yet** |
+| RouterOS sender → offline decoder | Patched CHR 7.25 x86 → QEMU virtual PC speaker WAV, KVM and TCG | `Hello` exact, sweep 0–15, Fletcher ✓; virtual audio, no microphone |
 
 Automated: `bun test` covers codec units and captures in `samples/` as
 regressions. Install Git LFS and run `git lfs pull` after cloning so those
@@ -45,7 +46,9 @@ says otherwise.
    verified payload. `bun run serve` builds the harness automatically.
 4. `bunx playwright install chromium` (once), then `bun run test:browser` —
    headless check through the real page: the Web Audio self-test
-   verifies end-to-end and a corrupted synth frame rejects.
+   verifies end-to-end, a corrupted synth frame rejects, and a file-fed
+   fake microphone drives Start Listening through the real detector
+   and session diagnostics. These remain synthetic audio checks.
 
 For a speaker → microphone experiment, follow the
 [two-device walkthrough](../README.md#try-two-computers-laptops-or-phones).
@@ -54,6 +57,22 @@ receiver's verdict is acoustic evidence. Report both devices, browsers,
 volume, distance, and symbol length, including failed attempts.
 Start with short ASCII text; the [current implementation limits](SPEC.md#current-implementation-limits)
 cover the live timeout for long messages and the ASCII-only text preview.
+
+### Real RouterOS integration without a physical router
+
+On Linux x86_64 with QEMU and gdb, `bun run test:chr` boots CHR 7.25,
+patches its speaker-init gate in RAM, fetch-loads the actual encoder,
+and transmits `Hello` through the virtual PC speaker. The offline
+decoder must verify the captured payload and checksum. Default
+`bun test` skips this network-dependent integration test.
+
+The separate [CHR beep workflow](../.github/workflows/chr-beep.yml)
+runs on PRs and main pushes; it is supplementary and does not gate
+Pages. [CHR-BEEP.md](CHR-BEEP.md#run-the-integration-test) has host setup,
+pins, accelerator selection, `act` rehearsal, and retained diagnostics.
+This covers the RouterOS sender and virtual audio path; physical
+piezos, microphones, browser receivers, and decay gaps need their own
+evidence.
 
 ## 2. Router, no special mic (the real test)
 
@@ -64,8 +83,10 @@ has the 5-minute setup.
 
 1. Load the encoder ([encode/README.md](../encode/README.md), recipe A).
    Dry-run first through centrs (`... yes`): check META/FRAME/T: lines,
-   no sound. If it prints META but no FRAME on 7.16, the globals were
-   API-loaded and can't nest — reload via SSH (recipe A). The receiver
+   no sound. META without FRAME indicates a failed nested call; that
+   happened with API/import loads before the encoder's `:global`
+   hardening. The updated script still needs a 7.16 hardware re-test;
+   use paste/SSH (recipe A) there. The receiver
    must match the META MAC/IP. CPU and therefore checksum can change on
    the next transmission; a separate dry-run is not exact checksum ground truth.
    Note them, and don't poll the router again
@@ -141,7 +162,9 @@ must keep failing for the right reason.
 - Is 200 ms the right default, or should the encoder measure its own
   piezo (probe sweep → pick sym)? `encode/probe-short.rsc` is the seed.
 - iPhone/Android over-air matrix: mics, browsers, distances, cases.
-- `/tool fetch` loading: RouterOS can fetch the `.rsc` from the Pages
-  URL, but `/import`-defined globals can't call globals on 7.16.
-  A `[:parse [/file get ... contents]]` load might behave like a paste —
-  **unverified; test on CHR + one real box before documenting it.**
+- `/tool fetch` loading: fetch + parse is verified on CHR 7.26beta3
+  (dry-run) and CHR 7.25 (virtual-speaker transmission). The separate
+  load/terminal-call recipe still needs a real 7.16 box (NS-5);
+  [recipe C](../encode/README.md#recipe-c-experimental-fetch-from-the-site-chr-verified-needs-716-hardware)
+  remains experimental. The integration uses one compound load/transmit
+  call and does not establish globals surviving an API session boundary.

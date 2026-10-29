@@ -10,7 +10,7 @@ item, update this file in the same change that does the work.
    [docs/TESTING.md](docs/TESTING.md) (how to test/report).
 2. Re-verify the baseline before changing anything:
    `bun install && bun test && bunx tsc --noEmit && bun run lint`
-   (baseline at last update: 64 pass, tsc clean, lint clean).
+   (baseline at last update: 65 pass + 1 opt-in CHR skip, tsc/lint clean).
 3. Work the highest-priority `ready` item. One item per change.
 4. When done, move the item to **Done** with date + evidence (test output,
    commit, capture file, or URL). Never delete an item silently; a dropped
@@ -23,11 +23,18 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
 ## State at last update (2026-10-28)
 
 - Offline decoder: verified on RB1100AHx4 + RB953GS-5HnT captures.
+- RouterOS integration: `bun run test:chr` fetch-loads the real encoder
+  on CHR 7.25 x86, patches the speaker-init branch in RAM, captures
+  QEMU pcspk audio, and verifies `Hello` offline. KVM, TCG, and `act`
+  rehearsals pass; this is virtual audio, not hardware or live-browser
+  evidence. Exact CLI pins, setup, and limits: [docs/CHR-BEEP.md](docs/CHR-BEEP.md).
+  The supplementary `chr-beep` job is outside CI/Pages gating;
+  GitHub-hosted proof remains part of NS-1.
 - Live decoder: desktop verified; iPhone has only passed the in-page
   Self-test, never an over-air frame (see `frames.jsonl` analysis in
-  docs/TESTING.md). Repo not yet published to GitHub; the pre-publish
-  worktree is consolidated into local commits on `main`, unpushed (no
-  remote configured). NS-20 still governs the public history decision.
+  docs/TESTING.md). Repo not yet published to GitHub; `main` holds the
+  LFS-migrated history (NS-20 done), unpushed, no remote configured.
+  Local backup ref `backup/pre-lfs-migrate` lives until the NS-1 push.
 - Try tab: `live.html` opens on Try it — RouterOS load/play panel
   (`$enbeepText`) + editable speaker sender with byte validation;
   11-byte payloads show their text reading; the diagnostics report keeps
@@ -43,7 +50,7 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   validation, unload one-liner; CHR 7.26beta3 dry-run matrix green
   (paste, API-load, `/import`, `[:parse]`, fetch one-liner E2E). 7.16
   `/import` re-test still needs hardware. Named parameters + defaults
-  are a non-blocking inbox idea.
+  are the non-blocking NS-27 item.
 - Pages gating (NS-21 change landed, demo pending NS-1): Pages deploys
   only on same-repo push CI success via `workflow_run`, pinned to the
   validated SHA, with no manual dispatch bypass; actionlint clean.
@@ -62,18 +69,8 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
 
 ## P0 — publish gate (top first; NS-1 last)
 
-- [ ] **NS-20 Decide initial public Git history / LFS migration** · `ready`
-  LFS attributes do not convert old commits: `git lfs migrate info
-  --include-ref=refs/heads/main` finds ~81 MB WAV + 3.7 MB M4A as plain
-  Git objects. Choose preservation + migration or a clean public history;
-  do not rewrite existing history as routine cleanup. Done when: the
-  publication history is chosen, its text/credentials reviewed, and a
-  fresh LFS checkout runs the gates without relying on local files.
-  Analysis 2026-10-28: 13 commits, single branch, no remote (a pre-push
-  migrate is externally free); history secret-scan clean, no
-  scratch/frames/keys committed; working-tree audio already LFS. Awaiting
-  the owner's preservation-vs-clean choice + push (NS-1).
-- [ ] **NS-21 Gate Pages deployment on validation** · `ready`
+- [ ] **NS-21 Gate Pages deployment on validation** · `blocked` by NS-1's
+  first GitHub CI/deploy cycle.
   Workflow change landed 2026-10-28 (actionlint clean, revised after
   review): Pages triggers on CI completion via `workflow_run`, deploys
   only when the conclusion is `success` on a same-repo push event, and
@@ -84,12 +81,19 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   workflow change rather than claiming a local smoke test proves GitHub
   deployment works.
 - [ ] **NS-1 Publish and prove the public surfaces** · `ready`
-  Push to GitHub; enable Actions + Pages. Done when: CI is green on
-  `main`, the Pages URL serves `/` (live decoder), `/harness.html`, and
-  `/enbeep.rsc` (fetch each, record the URL here).
+  Commit the reviewed working tree first, including the new CHR test,
+  workflow and contribution docs; configure the chosen GitHub remote.
+  Push to GitHub (`git push -u origin main` — only `main`, never the
+  local `backup/*` or `refs/t3/*` refs); enable Actions + Pages. Done
+  when: CI is green on `main`, the Pages URL serves `/` (live decoder),
+  `/harness.html`, and `/enbeep.rsc` (fetch each, record the URL here).
+  After the push succeeds, delete the local `backup/pre-lfs-migrate`
+  ref (it pins the pre-migration objects).
   No Git remote is configured in this checkout yet. During publication,
   apply and verify the GitHub settings in
   [CONTRIBUTING.md](CONTRIBUTING.md#github-setup-at-publication).
+  Also verify the supplementary CHR beep workflow and its downloadable
+  capture/diagnostic artifact on the first main push (`act` is rehearsal).
   Feed verified demo/issue URLs into the public README pass (NS-24).
 ## P0 — demo truth (claims we must not make unverified)
 
@@ -123,23 +127,16 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   each advertised action is available in the deployed code and the
   instructions match the page, with experimental limits still clear.
 
-- [ ] **NS-29 File-fed live-listen verification** · `ready`
-  `tick()`'s mic-path code (clip scan, band accumulation, dropout
-  counting, floor learning) never executes in any test: bun tests drive
-  `processFrame` via `_test`, and smoke self-tests run synth-gated.
-  Feed a rendered v2 frame WAV as the fake mic, press Start Listening
-  for real, and assert a mic-path verify of the known frame plus
-  populated (non-n/a) session/band lines and zero dropouts. Done when:
-  smoke asserts that end-to-end mic-path verify. Closes the last
-  unexecuted-lines gap before hardware trials; do before the final
-  hardware pass so a tick bug can't waste it.
 - [ ] **NS-27 Named encoder parameters + defaults** · `ready` (low, non-blocking)
   Accept `$enbeepText text="Hello" symbol=200ms` style named arguments
   with defaults for sym/tone alongside the positional
   `text sym tone dry` form (positional keeps working; decide the exact
-  names before implementing). Done when: both call styles dry-run
-  identically on CHR, validation errors stay prefixed and fail-fast,
-  and encode/README.md documents the names. Not a publish gate.
+  names before implementing). Lower-stakes alternative: a small helper
+  with defaults (note `$enbeepText` already plays that role against
+  `$enbeepXmit`; align web defaults with it). Done when: both call
+  styles dry-run identically on CHR, validation errors stay prefixed
+  and fail-fast, and encode/README.md documents the names. Not a
+  publish gate.
 - [ ] **NS-26 Scheduler autoload trial** · `needs-hardware`
   Check whether the encoder functions can autoload at boot via
   `/system scheduler` (start-up event running the fetch one-liner or a
@@ -182,9 +179,77 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   trigger, matched A/B).
 - Mic position log: fixed hang points + geometry convention per the
   aes67-mic-path skill.
+- CHR pcspk-beep follow-up after NS-30: `tone < sym` gap-loss verdict.
+  CLI versions are already exact pins; moving package tags need no change.
 
 ## Done
 
+- 2026-10-28 — Pre-publication CHR/code/docs review: isolated VM names
+  (parallel KVM/TCG runs pass), original + replacement patch-byte
+  checks, explicit WAV format + shared WAV reader, API failure no
+  longer accepted just because audio grew, cleanup errors surfaced,
+  capture/verdict/log artifacts retained locally and uploaded by the
+  workflow. Failure probing caught bunx's surviving child keeping
+  stdout open after timeout; kill the command process group, covered
+  by a default-suite regression. Pin `start --version 7.25` too:
+  quickchr otherwise contacts the stable-channel endpoint before
+  looking up the named VM, which hung during this review. README,
+  TESTING, CHR-BEEP, encoder guide, CONTRIBUTING and AGENTS aligned
+  around virtual audio vs hardware evidence and the supplementary
+  workflow. NS-21's remaining GitHub-only proof marked blocked by
+  NS-1; the obsolete moving-tag follow-up is resolved by exact pins.
+  Evidence: 65 bun pass + 1 expected CHR skip, tsc/lint/actionlint clean,
+  browser A/B/C1/C2/F/E/D + 18 Python tests green; final KVM/TCG runs
+  41/54 s; wrong-signature probe rejects before writing and cleans up.
+  `act` KVM passed including artifact upload; software-only `act` TCG
+  passed in 60 s with the stock image cached read-only (the preceding
+  cold-cache run hit a MikroTik download outage, with failure artifacts
+  successfully uploaded). Commands/logs:
+  `.scratch/2026-10-28-chr-review/README.md`. Working tree only.
+- 2026-10-28 — NS-30 CHR pcspk-beep integration test:
+  `test/chr-beep.test.ts` (`bun run test:chr`, gated on
+  `ENBEEP_CHR_TEST=1`) boots x86 CHR 7.25 via quickchr@0.5.3
+  (`--qemu-arg` pcspk audiodev, `start --frozen`, gdbstub RAM patch
+  with verify-before-write, `continue`), fetch-parses + transmits
+  `$enbeepText "Hello"` in one compound API call (same-session; a
+  split load/transmit flaked once), and decodes the sliced capture
+  (`ok:true`, sweep 0–15, payload Hello, Fletcher OK). Separate
+  `.github/workflows/chr-beep.yml` (not a Pages gate). Evidence: local
+  KVM 42 s + TCG 53 s green (cmdline-verified `-accel tcg`), `act`
+  rehearsal with `/dev/kvm` green in 58 s, default `bun test` 64 pass
+  + 1 skip, tsc/lint/actionlint clean. Follow-ups stay in the inbox
+  (`tone<sym` gap verdict; the original tag-switch note is superseded
+  by the review above). Side findings in
+  docs/CHR-BEEP.md: compound-call requirement, KVM-optional proof,
+  one unexplained CHR reboot in ~1 h. Working tree only.
+- 2026-10-28 — NS-29/NS-20 review follow-ups (2 P2s + 1 P3): backup ref
+  restored to the verified pre-migration commit with an old-value guard
+  (main untouched); smoke (F) now requires the signal/band lines and
+  parses finite in-bounds clip-peak %, in/out-of-band dB, and floor
+  range (missing/n/a/NaN all fail); samples/README.md LFS status
+  aligned with completed NS-20. Evidence: 64 bun pass, tsc/lint clean,
+  browser A/B/C1/C2/F/E/D green. No commit per review instructions.
+- 2026-10-28 — NS-20 history preserved + migrated to LFS: 15/15 commits
+  rewritten (`main` e5f510d → 8074118), no `*.wav`/`*.m4a` left as plain
+  objects (largest blob now 100 KB), 39 files / 87 MB in LFS. Review:
+  secret scan clean; text IPs all private/docs/multicast (public-looking
+  hits are SVG path fragments in live.html); no emails, phones, home
+  paths, SSIDs, geo; single role-account author; lab MACs per NS-3.
+  Fresh-clone proof: documented `git lfs install` + pull materializes
+  real audio (also caught that only `--local` LFS config existed here),
+  then 64 pass + tsc + lint + full smoke green. Local-only backup ref
+  `backup/pre-lfs-migrate` until the NS-1 push (NS-1 records the push
+  scope + ref deletion); review caught the migrate moving the backup to
+  the new HEAD too, so it was restored to e5f510d with an expected-old-
+  value guard and re-verified (main at 8074118, original ~3.9 MB blobs
+  readable under the backup). Working tree only.
+- 2026-10-28 — NS-29 file-fed live-listen: smoke (F) feeds a rendered
+  11-byte v2 frame WAV as the fake mic, presses Start Listening for
+  real, and asserts a mic-path verify of the exact payload plus
+  populated clip/band session lines and ≤2 dropouts. Closes the
+  tick()-mic-path coverage gap (clip scan, band accumulation, dropout
+  counting, floor learning). Evidence: browser
+  A/B/C1/C2/F/E/D green. Working tree only.
 - 2026-10-28 — NS-28 review follow-ups (4 P2s): synth sessions no
   longer report mic-path clip/band (sessionIsSynth gate); Run checks
   probes the selected mic (deviceId); route line keeps the track's own

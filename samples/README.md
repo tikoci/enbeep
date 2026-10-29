@@ -27,9 +27,8 @@ These are lab devices published on purpose; use your own lab addressing
 for your captures and say so when you contribute one (docs/TESTING.md).
 
 Size note: ~85 MB of WAVs and original M4As, tracked with Git LFS
-(`samples/**/*.wav` and `samples/**/*.m4a` — install `git-lfs` before
-cloning). Fixtures must
+(`samples/**/*.wav` and `samples/**/*.m4a`) in the working tree and
+throughout history (migrated pre-publish). Install `git-lfs`, then
+`git lfs pull` after cloning, to materialize real audio instead of
+pointer files. Fixtures must
 be lossless; the M4As are kept for provenance, not as decoder inputs.
-The initial public history still needs the LFS migration/clean-history
-decision in NS-20 ([NEXT_STEPS.md](../NEXT_STEPS.md)); adding attributes
-does not convert audio already committed as ordinary Git objects.

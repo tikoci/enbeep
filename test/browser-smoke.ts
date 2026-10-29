@@ -4,8 +4,10 @@
 // and asserts: (A) the real Web Audio self-test verifies end-to-end,
 // (B) a corrupted synth frame rejects through the page's _test driver,
 // (C1/C2) the guided checks pass on quiet file-fed capture and flag
-// room+band on loud in-band capture, (E) the Try sender end to end,
-// (D) the harness frame/probe distinction, plus zero pageerrors.
+// room+band on loud in-band capture, (F) a file-fed frame verifies
+// through the real mic path with populated session acoustics,
+// (E) the Try sender end to end, (D) the harness frame/probe
+// distinction, plus zero pageerrors.
 // Not part of `bun test` (needs a browser);
 // CI runs it, locally: bunx playwright install chromium   (once)
 //                    bun run test:browser
@@ -14,6 +16,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
+import { tonesForPayload } from "../src/frame";
+import { renderTones } from "../src/synth";
 import { writeWav } from "../src/wav";
 
 // Type-only: `window` below appears solely inside functions serialized
@@ -98,6 +102,20 @@ const quietWav = join(tmp, "quiet.wav");
 const loudWav = join(tmp, "loudband.wav");
 writeFileSync(quietWav, captureWav("quiet"));
 writeFileSync(loudWav, captureWav("loudband"));
+
+// Full v2 frame fixture for (F): 1.5 s of leading quiet (floor settle
+// + tick startup margin), the 11-byte self-test frame at 200 ms, and a
+// 5 s tail so END recognition never races the end of the file.
+const FRAME_PAYLOAD = [2, 65, 170, 107, 44, 179, 10, 0, 2, 15, 0];
+const frameWav = join(tmp, "frame-200.wav");
+{
+  const frame = renderTones(tonesForPayload(FRAME_PAYLOAD, 200), CAP_SR);
+  const lead = Math.floor(1.5 * CAP_SR);
+  const tail = Math.floor(5 * CAP_SR);
+  const out = new Float64Array(lead + frame.length + tail);
+  out.set(frame, lead);
+  writeFileSync(frameWav, writeWav(out, CAP_SR));
+}
 
 interface CheckRow {
   name: string;
@@ -262,6 +280,85 @@ try {
       }
     }
     console.log("PASS (C2) guided checks flag room+band on loud in-band capture");
+
+    // (F) NS-29: real mic-path listen. The v2 frame WAV feeds the fake
+    // mic, Start Listening runs the actual tick() loop (clip scan, band
+    // accumulation, dropout counting, floor learning — code no other
+    // test executes), and the known frame must verify with populated
+    // session acoustics.
+    {
+      const b = await chromium.launch({
+        args: [
+          "--autoplay-policy=no-user-gesture-required",
+          "--use-fake-device-for-media-stream",
+          "--use-fake-ui-for-media-stream",
+          `--use-file-for-fake-audio-capture=${frameWav}`,
+        ],
+      });
+      try {
+        const p = await b.newPage();
+        const errs: string[] = [];
+        p.on("pageerror", (e) => errs.push(String(e)));
+        await p.goto(`http://localhost:${PORT}/`, { waitUntil: "load" });
+        await p.waitForFunction(
+          () => (window as unknown as { __enbeep?: object }).__enbeep !== undefined,
+          null,
+          { timeout: 15000 },
+        );
+        await p.click("#tabDecode");
+        await p.click("#startBtn");
+        await p.waitForFunction(
+          () =>
+            (window as unknown as { __enbeep: PageHook }).__enbeep._test.verdict() !== null,
+          null,
+          { timeout: 120000, polling: 500 },
+        );
+        const v = await p.evaluate(
+          () => (window as unknown as { __enbeep: PageHook }).__enbeep._test.verdict(),
+        );
+        if (!v?.ok || JSON.stringify(v.payload) !== JSON.stringify(FRAME_PAYLOAD)) {
+          fail(`mic-path listen should verify the frame, got ${JSON.stringify(v)}`);
+        }
+        const rep = await p.evaluate(
+          () => (window as unknown as { __enbeep: PageHook }).__enbeep._test.report(),
+        );
+        // Mic-path session must populate NUMERIC acoustics: line
+        // presence plus finite in-bounds numbers (a missing line, n/a,
+        // or NaN all fail — the predicate this replaced missed those).
+        const failRep = (why: string): never =>
+          fail(`mic-path acoustics ${why}, got ${JSON.stringify(rep)}`);
+        if (!rep.includes("- signal: ") || !rep.includes("- band: ")) {
+          failRep("must include signal and band lines");
+        }
+        const num = (s: string | undefined): number => (s === undefined ? NaN : Number(s));
+        const clip = rep.match(/clip peak (\d+)%/);
+        const clipPct = num(clip?.[1]);
+        if (!clip || !Number.isFinite(clipPct) || clipPct < 0 || clipPct > 100) {
+          failRep("must report finite clip peak 0-100%");
+        }
+        const band = rep.match(/- band: in-band (-?\d+) vs out-of-band (-?\d+) dB/);
+        const inDb = num(band?.[1]);
+        const outDb = num(band?.[2]);
+        const inRange = (v: number) => Number.isFinite(v) && v >= -120 && v <= 0;
+        if (!band || !inRange(inDb) || !inRange(outDb)) {
+          failRep("must report finite in/out-of-band dB");
+        }
+        const floor = rep.match(/floor (-?\d+)–(-?\d+) dB/);
+        const flMin = num(floor?.[1]);
+        const flMax = num(floor?.[2]);
+        if (!floor || !inRange(flMin) || !inRange(flMax) || flMin > flMax) {
+          failRep("must report a finite floor range");
+        }
+        const drops = rep.match(/dropouts (\d+)/);
+        if (!drops || Number(drops[1]) > 2) {
+          fail(`mic-path session should have ~zero dropouts, got ${JSON.stringify(rep)}`);
+        }
+        if (errs.length > 0) fail(`page errors during mic-path listen: ${errs.join(" | ")}`);
+      } finally {
+        await b.close();
+      }
+    }
+    console.log("PASS (F) mic-path listen verifies frame with session acoustics");
 
     // (E) Try-tab sender end to end: validation, RouterOS preview sync,
     // and a real "Hi" frame through Web Audio into the state machine.

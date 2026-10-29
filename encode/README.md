@@ -154,6 +154,12 @@ passed there too. NS-5 keeps this experimental until one real 7.16 box
 confirms it. Verify with the dry-run in step 4 above: META without FRAME
 means the load failed.
 
+The [CHR integration](../docs/CHR-BEEP.md) also fetch-loads and transmits
+on CHR 7.25, in one compound API call. It does not verify a separate
+fetch-load call followed by a new API session: that split failed once
+in the lab. The terminal workflow above and the 7.16 hardware trial
+remain separate evidence.
+
 Validated hardware (lab codenames in `samples/` map to these models):
 
 - RB1100AHx4 (RouterOS 7.26): `"bridge" <row>`; fast piezo, 200 ms works.
@@ -164,4 +170,10 @@ Validated hardware (lab codenames in `samples/` map to these models):
 Other RouterOS 7.15+ devices with a piezo beeper are experiments; please
 report model, RouterOS version, symbol length, and mic in an issue (see
 [../docs/TESTING.md](../docs/TESTING.md)). Devices without a beeper
-(CHR, most ARM cloud images) can only dry-run (`yes`).
+(including stock CHR) can dry-run (`yes`). With the tested CHR 7.25
+x86 image under QEMU, `:beep` can also drive the virtual
+PC speaker after the RAM-patch procedure in
+[../docs/CHR-BEEP.md](../docs/CHR-BEEP.md) — silent to humans, but
+capturable: `bun run test:chr` transmits a frame this way and decodes
+the capture (Linux x86_64, QEMU + gdb + network). This bypasses one
+speaker-init branch; CHR still runs under virtualization.

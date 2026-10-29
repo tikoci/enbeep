@@ -30,6 +30,8 @@
 # Validated: CHR 7.26beta3 (dry-run logic, incl. API-loaded nesting) +
 # RB1100AHx4 (air) + RB953GS-5HnT 7.16.2 (paste-load only; piezo attacks
 # slowly - short tones ~15 dB under syncs, edge sweep tone may merge).
+# CHR 7.25 x86 also transmits Hello through a patched QEMU virtual
+# speaker into the offline decoder (bun run test:chr; docs/CHR-BEEP.md).
 
 :global enbeepTone do={
     :local freq $1; :local sym $2; :local dry $3; :local tone $4;

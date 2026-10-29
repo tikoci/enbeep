@@ -65,7 +65,9 @@ automated checks from hardware evidence.
 
 You need a RouterOS 7.15+ device with a working piezo beeper, terminal
 access, and a computer or phone with a microphone. Other models are
-untested; CHR can check encoder logic but cannot supply the acoustic test.
+untested. A [patched CHR integration test](docs/CHR-BEEP.md) exercises
+the encoder through a virtual PC speaker; physical acoustics still
+need a beeper and microphone.
 
 1. Open the receiver page. In **Decode**, choose **200 ms** and press
    **Start Listening**; allow microphone access. Place the mic about
@@ -160,6 +162,9 @@ bun run frame:decode --file samples/bigdude-v2-200a.wav --sym 200
 # Optional real-browser checks (synthetic audio, not hardware evidence):
 bunx playwright install chromium
 bun run test:browser
+# Optional real RouterOS sender → virtual-speaker capture → offline decode:
+# Linux x86_64, QEMU + gdb + network; setup and limits in docs/CHR-BEEP.md
+bun run test:chr
 ```
 
 The current structure is deliberately small:
@@ -170,7 +175,7 @@ The current structure is deliberately small:
 | `src/` | WAV I/O, DSP, offline frame decoder, test synthesis |
 | [live.html](live.html), [serve.ts](serve.ts) | Live Web Audio receiver and development server |
 | [harness.html](harness.html), `web/` | Recording decoder using the shared offline codec |
-| `test/`, [samples/](samples/README.md) | Synthetic tests and real acoustic regressions |
+| `test/`, [samples/](samples/README.md) | Codec, browser, and CHR checks; real acoustic regression fixtures |
 | [rig/](rig/README.md) | Optional Linux recording/trigger tools for repeated hardware trials |
 | `decode/`, `samples/legacy/` | Retired experiments + batch tools; outside the v2 path |
 

@@ -172,6 +172,95 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
 
 ## Done
 
+- 2026-10-29 — NS-31 WebAudio/mic lifecycle hardening (Codex review
+  2026-10-29; report pasted in chat, `.scratch` copy on the owner's
+  Mac): single-flight startup with Cancel (generation guard, local
+  resource ownership until commit, late grants stopped, idempotent
+  teardown), exclusive mic-vs-synth ownership (Self-test/sender refuse
+  a live session), picker disabled during capture + devicechange/
+  visible refresh + permission-honest options + loud vanished-device
+  fallback, context created/resumed in-gesture with a running-clock
+  requirement, mute/unmute/end + suspend/resume + wake-lock-release
+  handling with frame invalidation, checks gated on a healthy clock
+  with blocked (○) rows + fresh synth verdicts, and preserved failure
+  identity (stage/name/message/constraint, selected-vs-applied route,
+  audio snapshot, lifecycle log, synth-tagged verdicts, hint
+  reordered definite-first). Codec + thresholds unchanged. Evidence:
+  new `test/webaudio.test.ts` 13 lifecycle regressions, `bun test` 81
+  pass + 1 opt-in CHR skip, tsc/lint clean, browser A/B/C1/C2/F/E/D
+  green with zero pageerrors, Python legacy 18 pass in `.venv`
+  (system python lacks numpy — pre-existing), docs/DIAG.md field
+  reference updated. Posted as PR #4 (branch
+  `fix/ns-31-webaudio-lifecycle`); review follow-ups below.
+- 2026-10-29 — NS-31 review follow-ups (Macroscope, PR #4): bound
+  every pending audio promise (5 resume sites + wake-lock request +
+  checks enumeration share a 5 s `settleBefore` race, shrinkable via
+  `_test`), so a stuck autoplay promise can no longer wedge startup,
+  playback, or checks; sync tracking now resets on loop gaps,
+  interruption, and recovery (a gap no longer counts toward the 800 ms
+  preamble); the tick loop decodes nothing while interrupted but stays
+  armed. Evidence: 4 new `test/webaudio.test.ts` regressions (17 total
+  in file; verified to fail on the pre-fix page while the other 13
+  pass), `bun test` 85 pass + 1 skip, tsc/lint clean, browser
+  A/B/C1/C2/F/E/D green.
+- 2026-10-29 — NS-31 review follow-ups (CodeRabbit, PR #4): post-commit
+  setup failures now release the committed mic/context via
+  `stopListening` and report at a new `setup` stage (its Major on
+  pending `resume()` was already fixed by the previous push); the
+  checks probe closes a local context even on mid-probe throws;
+  recovery requires a live unmuted track plus a running clock (no
+  cross-clearing); `playTones` reports whether the audio finished and
+  both callers pass it up; an unplayed synth check reports blocked.
+  Evidence: 3 new + 2 strengthened `test/webaudio.test.ts` tests (20
+  in file; the 4 behavior-change tests fail on the pre-fix page while
+  the other 16 pass), `bun test` 88 pass + 1 skip, tsc/lint clean,
+  browser A/B/C1/C2/F/E/D green. The stub-button fix this round also
+  made two earlier tests exercise their real paths.
+- 2026-10-29 — NS-31 review follow-ups, round 3 (Macroscope, PR #4):
+  late wake-lock grants after the request timeout are released instead
+  of leaking past Stop; startup rechecks context/track health after
+  the wake-lock yield (suspension/mute/ended in that window
+  interrupts instead of presenting healthy capture); a page tap
+  resumes a suspended live session, making the interruption message
+  true. Evidence: 3 new `test/webaudio.test.ts` regressions (23 in
+  file; all 3 fail on the pre-fix page while the other 20 pass), `bun
+  test` 91 pass + 1 skip, tsc/lint clean, browser A/B/C1/C2/F/E/D
+  green. Note: CodeRabbit auto incremental reviews are disabled on
+  this repo, so it only reviewed the first push — re-review needs a
+  manual `@coderabbitai review` trigger.
+- 2026-10-29 — NS-31 review follow-ups, round 4 (Macroscope, PR #4):
+  checks runs are cancellable (same generation discipline as
+  startup): the button reads Cancel while a run is live, cancelling
+  frees mic-free playback at once, a late probe grant's tracks are
+  stopped and never adopted, the probe loop and synth phase never run
+  for a dead run, and rows/report state stay untouched after cancel.
+  Evidence: 3 new `test/webaudio.test.ts` regressions (26 in file;
+  all 3 fail on the pre-fix page while the other 23 pass), `bun test`
+  94 pass + 1 skip, tsc/lint clean, browser A/B/C1/C2/F/E/D green,
+  docs/DIAG.md notes the Cancel behavior.
+- 2026-10-29 — NS-31 review follow-ups, round 5 (Codex + Macroscope,
+  PR #4): an ended mic track now invalidates the in-progress frame
+  and parks the decode loop until a new session (recovery can never
+  clear a dead path); the checks probe watches clock/track health
+  mid-measurement and blocks the dependent rows instead of reporting
+  passes on stale samples; cancelling before the checks mic request
+  never opens a permission prompt; wake-lock re-acquisition shares
+  startup's release handling (plus late-grant release when stopped
+  mid-request); the checks button stays an enabled Cancel through
+  the synth phase. Evidence: 5 new + 1 extended
+  `test/webaudio.test.ts` tests (31 in file; all 6 fail on the
+  pre-fix page while the other 25 pass), `bun test` 99 pass + 1
+  skip, tsc/lint clean, browser A/B/C1/C2/F/E/D green, docs/DIAG.md
+  notes the mid-probe blocks + Cancel behavior.
+- 2026-10-29 — NS-31 review follow-ups, round 6 (Claude, PR #4): a
+  wake-lock re-acquire that lands while another grant already holds
+  the handle (a second visibility return, or Stop/Start mid-request)
+  is released instead of overwriting and orphaning the held lock; the
+  checks probe treats a trackless grant as `NotFoundError` (same as
+  startup) instead of crashing in the probe loop. Evidence: 2 new
+  `test/webaudio.test.ts` regressions (33 in file; both fail on the
+  pre-fix page while the other 31 pass), `bun test` 101 pass + 1
+  skip, tsc/lint clean, browser A/B/C1/C2/F/E/D green.
 - 2026-10-28 — NS-1 Publish and prove the public surfaces: created
   tikoci/enbeep (public), pushed `main` only at `add372c` (backup +
   `t3/*` refs stayed local), LFS 39/39 objects. First cycle green:

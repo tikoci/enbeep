@@ -164,6 +164,11 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   aes67-mic-path skill.
 - CHR pcspk-beep follow-up after NS-30: `tone < sym` gap-loss verdict.
   CLI versions are already exact pins; moving package tags need no change.
+- Diag-UX follow-ups from the first iPhone trial (NS-22): session
+  activity timeline (reconstruct what the reporter did — failures get
+  wiped by later checks today), sender details as a real form next to
+  Copy-diagnostics instead of fill-in-by-hand, README pointer for the
+  one-shot report procedure (listen → play once → copy immediately).
 
 ## Done
 

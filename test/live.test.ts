@@ -46,6 +46,7 @@ interface RouteSettings {
 interface EnbeepHook {
   C: { noiseFloor: number; snrDb: number };
   tonesForFrame(payload: number[], sym: number): Array<[number, number]>;
+  senderTones(payload: number[], sym: number): Array<[number, number]>;
   encodeMessage(text: string): { ok: boolean; bytes?: number[]; error?: string };
   classifyRoute(
     label: string,
@@ -114,6 +115,18 @@ test("browser demo tone plan matches the shared v2 encoder", () => {
       );
     }
   }
+});
+
+test("try sender warms a cold output path without disturbing the frame", () => {
+  const payload = [72, 101, 108, 108, 111];
+  const sent = live.senderTones(payload, 200);
+  // 2 s at 1000 Hz: below the sync/data bands, ahead of the preamble.
+  expect(sent[0]).toEqual([1000, 2000]);
+  expect(sent.slice(1)).toEqual(live.tonesForFrame(payload, 200));
+  // The live decoder ignores the lead-in and verifies the frame.
+  const v = feedPlan(sent, 200);
+  expect(v?.ok).toBe(true);
+  expect(v?.payload).toEqual(payload);
 });
 
 /**

@@ -1453,6 +1453,13 @@
     // --- Try-tab message sender ---
     // Same v2 framing as the router; the message is raw UTF-8 bytes, 1..255
     // per the SPEC (LEN is one byte). Pure: also unit-tested via __enbeep.
+    // iOS cold-output warm-up (NS-22 trial): first emission after page load
+    // can lose its first ~1-2 s to route spin-up, eating the preamble (no
+    // lock) or shifting it (SEP false-lock + 'expected SEP' death). A 2 s
+    // audible lead-in warms the route before the frame; 1000 Hz sits below
+    // the sync/data bands so the receiver ignores it.
+    const WARM_FREQ = 1000, WARM_MS = 2000;
+    function senderTones(bytes, symMs) { return [[WARM_FREQ, WARM_MS], ...tonesForFrame(bytes, symMs)]; }
     function encodeMessage(text) {
         const bytes = Array.from(new TextEncoder().encode(text));
         if (!bytes.length) return { ok: false, error: 'Type a message first (1–255 bytes).' };
@@ -1461,7 +1468,7 @@
     }
 
     function frameSeconds(len, sym) {
-        return (4000 + 16 * sym + (len + 3) * 2 * sym) / 1000;
+        return (WARM_MS + 4000 + 16 * sym + (len + 3) * 2 * sym) / 1000;
     }
 
     async function playMessage() {
@@ -1477,8 +1484,10 @@
 
         const startedForTest = (state === S.IDLE);
         if (startedForTest) startSelfTest();
+        // Cold-start guard: never schedule on a suspended clock.
+        try { if (audioCtx.state !== 'running') await audioCtx.resume(); } catch (e) {}
 
-        await playTones(tonesForFrame(enc.bytes, symMs));
+        await playTones(senderTones(enc.bytes, symMs));
 
         playBtn.disabled = false;
         playBtn.textContent = 'Play message';
@@ -2139,7 +2148,7 @@
     }
 
     // Test surface: pure helpers plus the state-machine driver.
-    window.__enbeep = { fletcher16, tonesForFrame, freqToNibble, encodeMessage, C,
+    window.__enbeep = { fletcher16, tonesForFrame, senderTones, freqToNibble, encodeMessage, C,
         classifyRoute, roomVerdict, clipVerdict, bandVerdict,
         _selftest: { startSelfTest, stopListening },
         _test: { reset: testReset, feed: testFeed, verdict: () => lastVerdict,

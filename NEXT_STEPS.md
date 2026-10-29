@@ -228,6 +228,16 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   green. Note: CodeRabbit auto incremental reviews are disabled on
   this repo, so it only reviewed the first push — re-review needs a
   manual `@coderabbitai review` trigger.
+- 2026-10-29 — NS-31 review follow-ups, round 4 (Macroscope, PR #4):
+  checks runs are cancellable (same generation discipline as
+  startup): the button reads Cancel while a run is live, cancelling
+  frees mic-free playback at once, a late probe grant's tracks are
+  stopped and never adopted, the probe loop and synth phase never run
+  for a dead run, and rows/report state stay untouched after cancel.
+  Evidence: 3 new `test/webaudio.test.ts` regressions (26 in file;
+  all 3 fail on the pre-fix page while the other 23 pass), `bun test`
+  94 pass + 1 skip, tsc/lint clean, browser A/B/C1/C2/F/E/D green,
+  docs/DIAG.md notes the Cancel behavior.
 - 2026-10-28 — NS-1 Publish and prove the public surfaces: created
   tikoci/enbeep (public), pushed `main` only at `add372c` (backup +
   `t3/*` refs stayed local), LFS 39/39 objects. First cycle green:

@@ -616,8 +616,15 @@
     // reset. Copy the report before a second reset.
     let prevFrameLog = [];
     let prevDropCounts = {};
-    // Triage-checks runner state.
+    // Triage-checks runner state. checksRunning means a run owns the
+    // UI (the button reads Cancel and taps cancel it); checksOp is its
+    // generation, checksInflight counts unsettled runs. Cancel restores
+    // mic-free controls at once while the stale run self-cleans on
+    // settle — a late probe grant's tracks are stopped, never adopted.
     let checksRunning = false;
+    let checksSeq = 0;
+    let checksOp = 0;
+    let checksInflight = 0;
     let checkResults = [];
     // Last enumerateDevices audioinput count (-1 = unknown yet).
     let knownMics = -1;
@@ -859,7 +866,7 @@
             setStatus('Still cancelling the last request…');
             return;
         }
-        if (checksRunning) {
+        if (checksRunning || checksInflight > 0) {
             setStatus('Checks are running — wait for them to finish');
             return;
         }
@@ -1948,10 +1955,16 @@
     function refreshControls() {
         const active = state !== S.IDLE;
         const starting = startOp !== 0 || inflightStarts > 0;
+        const checksSettling = !checksRunning && checksInflight > 0;
+        // A settling (cancelled, not yet cleaned up) checks run frees
+        // mic-free playback but cannot start another run or listen.
         const busy = active || starting || checksRunning || synthPlaying;
         selfBtn.disabled = busy;
         playBtn.disabled = busy;
-        checksBtn.disabled = busy;
+        checksBtn.disabled = active || starting || synthPlaying || checksSettling;
+        if (checksRunning) checksBtn.textContent = 'Cancel';
+        else if (checksSettling) checksBtn.textContent = 'Cancelling…';
+        else checksBtn.textContent = 'Run checks';
         micSel.disabled = active || starting || checksRunning;
         micSel.title = micSel.disabled
             ? 'Stop listening to change the microphone (picking another input never switches a live stream)'
@@ -2369,17 +2382,34 @@
     }
 
     async function runChecks() {
-        if (checksRunning) return;
+        if (checksRunning) { // Cancel tap: invalidate; the stale run self-cleans on settle
+            checksOp = 0;
+            checksRunning = false;
+            checkResults = [{ name: 'cancelled', ok: false, detail: 'Checks cancelled.' }];
+            renderChecks(checkResults);
+            lifeEvent('checks', 'cancel requested');
+            refreshControls();
+            return;
+        }
+        if (checksInflight > 0) { // cancelled run not yet settled: no new run
+            checkResults = [{ name: 'pre', ok: false, detail: 'Checks are finishing — wait a moment.' }];
+            renderChecks(checkResults);
+            return;
+        }
         if (state !== S.IDLE || startOp !== 0 || inflightStarts > 0) {
             checkResults = [{ name: 'pre', ok: false, detail: 'Stop listening, then run checks.' }];
             renderChecks(checkResults);
             return;
         }
+        const gen = ++checksSeq;
+        checksOp = gen;
+        checksInflight++;
         checksRunning = true;
         refreshControls();
         checkResults = [];
         renderChecks(checkResults);
         const push = (name, ok, detail, blocked) => {
+            if (checksOp !== gen) return; // cancelled: never touch the UI again
             checkResults.push({ name, ok, detail, blocked: !!blocked });
             renderChecks(checkResults);
         };
@@ -2424,6 +2454,9 @@
             };
             if (micSel.value) constraints.deviceId = { exact: micSel.value };
             stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+            // Cancelled while the prompt was open: the finally below stops
+            // the late grant; adopt nothing, report nothing.
+            if (checksOp !== gen) return;
             const track = stream.getAudioTracks()[0];
             const label = (track && track.label) || 'unlabelled input';
             // Persist the applied path for the report, even if the user
@@ -2464,7 +2497,7 @@
             let peak = -Infinity, sumSq = 0, nSamp = 0, clipN = 0, totN = 0, tPeak = 0;
             let inPow = 0, inN = 0, outPow = 0, outN = 0;
             const t0 = performance.now();
-            while (performance.now() - t0 < 2000) {
+            while (performance.now() - t0 < 2000 && checksOp === gen) {
                 const measure = performance.now() - t0 >= 1000;
                 an.getFloatFrequencyData(buf);
                 let fp = -Infinity, fi = 0, fin = 0, fo = 0, fon = 0;
@@ -2494,6 +2527,10 @@
                 }
                 await sleep(50);
             }
+            // Cancelled mid-probe: skip the rows and the synth phase. The
+            // finally below stops the stream; the guarded push backstops
+            // any await this check does not cover.
+            if (checksOp !== gen) return;
             src.disconnect();
             if (!AC) await actx.close().catch(() => {});
             const rmsDb = nSamp > 0 && sumSq > 0 ? 10 * Math.log10(sumSq / nSamp) : -Infinity;
@@ -2522,6 +2559,9 @@
             refreshMicList(); // labels now available after the grant
             } // end clock-gated probe
         } catch (e) {
+            // Cancelled while probing: leave the report state alone; the
+            // finally below still stops the stream.
+            if (checksOp !== gen) return;
             const nm = (e && e.name) || '';
             const msg = e && e.message ? e.message : String(e);
             micFailed = nm || msg;
@@ -2537,6 +2577,8 @@
             // idempotent; the success path already closed it).
             if (actx && actx !== AC) actx.close().catch(() => {});
         }
+        // Cancelled after the probe: never play tones for a dead run.
+        if (checksOp !== gen) return;
         try {
             const before = lastVerdict;
             const played = await playSelfTest(true);
@@ -2555,12 +2597,17 @@
         } catch (e) {
             push('synth', false, 'self-test threw: ' + (e && e.message ? e.message : e));
         }
-        lifeEvent('checks', 'done');
+        if (checksOp === gen) lifeEvent('checks', 'done');
         } finally {
             if (AC) AC.close().catch(() => {});
-            checksRunning = false;
+            checksInflight--;
+            // A stale run must not touch the results the cancel left
+            // behind; a live run owns the teardown.
+            if (checksOp === gen) {
+                checksRunning = false;
+                renderChecks(checkResults);
+            }
             refreshControls();
-            renderChecks(checkResults);
         }
     }
 
@@ -2630,10 +2677,11 @@
     // the control states the session implies. Read-only copies.
     function sessionSnapshot() {
         return { state, starting: startOp !== 0, inflight: inflightStarts,
-            synthPlaying, checksRunning, sessionIsSynth,
+            synthPlaying, checksRunning, checksInflight, sessionIsSynth,
             interrupted: captureInterrupted, dead: micDeadFired,
             micFailed, micFailedDetail: micFailedDetail ? { ...micFailedDetail } : null,
             appliedLabel, startLabel: startBtn.textContent,
+            checksLabel: checksBtn.textContent,
             selfDisabled: selfBtn.disabled, playDisabled: playBtn.disabled,
             checksDisabled: checksBtn.disabled, micDisabled: micSel.disabled,
             micValue: micSel.value, status: statusEl.textContent,

@@ -15,6 +15,7 @@ interface SessionSnapshot {
   inflight: number;
   synthPlaying: boolean;
   checksRunning: boolean;
+  checksInflight: number;
   sessionIsSynth: boolean;
   interrupted: string | null;
   dead: boolean;
@@ -29,6 +30,7 @@ interface SessionSnapshot {
   } | null;
   appliedLabel: string | null;
   startLabel: string;
+  checksLabel: string;
   selfDisabled: boolean;
   playDisabled: boolean;
   checksDisabled: boolean;
@@ -932,6 +934,56 @@ test("tap resumes a suspended session", async () => {
   expect(t.api.session().interrupted).toBeNull();
   expect(t.api.session().status).toBe("Listening — waiting for sync tone…");
   t.api.stop();
+});
+
+test("cancelled checks free playback; late probe grant is stopped", async () => {
+  const d = deferred<FakeStream>();
+  const t = loadPage({ gum: () => d.promise });
+  const p = t.api.runChecks(); // probe "prompt" open
+  for (let i = 0; i < 200 && !t.api.session().checksRunning; i++) await Bun.sleep(5);
+  expect(t.api.session().checksLabel).toBe("Cancel");
+  await t.api.runChecks(); // cancel tap
+  const cancelled = t.api.session();
+  expect(cancelled.checksRunning).toBe(false);
+  expect(cancelled.checksInflight).toBe(1);
+  expect(cancelled.checksLabel).toBe("Cancelling…");
+  expect(cancelled.selfDisabled).toBe(false); // mic-free playback freed at once
+  expect(t.api.checks().results.map((r) => r.name)).toEqual(["cancelled"]);
+  const late = newMicStream("Late Probe");
+  d.resolve(late);
+  await p;
+  expect(late.tracks[0]?.stopped).toBe(true); // adopted nothing, stopped the grant
+  const settled = t.api.session();
+  expect(settled.checksInflight).toBe(0);
+  expect(settled.checksLabel).toBe("Run checks");
+  expect(t.api.checks().results.map((r) => r.name)).toEqual(["cancelled"]);
+  expect(t.gainTotal()).toBe(0); // dead runs play no tones
+  expect(await t.api.selfTest()).toBe(true); // and the page plays again
+});
+
+test("cancel during the probe loop skips rows and synth", async () => {
+  const t = loadPage();
+  const p = t.api.runChecks();
+  await Bun.sleep(200); // mid-probe (the loop runs 2 s)
+  expect(t.api.session().checksRunning).toBe(true);
+  await t.api.runChecks();
+  await p;
+  expect(t.api.checks().results.map((r) => r.name)).toEqual(["cancelled"]);
+  expect(t.gainTotal()).toBe(0);
+  expect(t.api.session().checksInflight).toBe(0);
+});
+
+test("cancel during synth keeps the cancelled row; no second playback", async () => {
+  const t = loadPage();
+  const p = t.api.runChecks();
+  for (let i = 0; i < 400 && !t.api.session().synthPlaying; i++) await Bun.sleep(10);
+  expect(t.api.session().synthPlaying).toBe(true);
+  await t.api.runChecks(); // cancel tap; the dead run's tones still sound out
+  // Own playback stays refused until those tones finish (no shared graph).
+  expect(await t.api.selfTest()).toBe(false);
+  await p;
+  expect(t.api.checks().results.map((r) => r.name)).toEqual(["cancelled"]);
+  expect(t.api.session().checksInflight).toBe(0);
 });
 
 test("wake-lock auto-release clears the handle so return re-acquires", async () => {

@@ -15,7 +15,10 @@ In-page tools (Diagnostics tab):
   (in-band vs out-of-band energy), then `synth` (in-page decode with no
   mic — must produce a fresh verdict from this run, never reuse an
   older one; an unstarted or interrupted playback reports blocked, not
-  rejected). Requires IDLE. Rows are pass (✓), fail (✗), or blocked
+  rejected). Requires IDLE. The button reads Cancel while a run is in
+  flight (e.g. a pending permission prompt): cancelling frees
+  mic-free playback at once, stops any late probe grant, and leaves a
+  `cancelled` row. Rows are pass (✓), fail (✗), or blocked
   (○): without a running audio clock or a mic capture, the acoustic
   rows report blocked instead of measuring silence, and `clip` is
   blocked (not passing) on browsers without the time-domain API (e.g.

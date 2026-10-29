@@ -13,15 +13,21 @@ In-page tools (Diagnostics tab):
   (permission + peak/RMS + applied `getSettings()` + Bluetooth flag),
   `room` (resting p10 level), `clip` (time-domain hot fraction), `band`
   (in-band vs out-of-band energy), then `synth` (in-page decode with no
-  mic). Requires IDLE. Thresholds: mic peak ≤ −90 dBFS = dead; room
+  mic — must produce a fresh verdict from this run, never reuse an
+  older one). Requires IDLE. Rows are pass (✓), fail (✗), or blocked
+  (○): without a running audio clock or a mic capture, the acoustic
+  rows report blocked instead of measuring silence, and `clip` is
+  blocked (not passing) on browsers without the time-domain API (e.g.
+  iOS pre-14.1). Thresholds: mic peak ≤ −90 dBFS = dead; room
   resting > −45 dBFS = too loud; clip > 0.1% samples over 0.99 = too
-  hot (n/a on browsers without the time-domain API, e.g. iOS
-  pre-14.1); in-band > −50 dBFS while within 6 dB of out-of-band = whine
+  hot; in-band > −50 dBFS while within 6 dB of out-of-band = whine
   in 1.8–4.1 kHz. A `BLUETOOTH route suspected` flag (explicit
   Bluetooth/AirPods/HFP label, or a headset/unknown label at mono ≤ 16
   kHz; USB labels never suspect) means: disconnect BT / switch to a
   wired, built-in, or USB mic — HFP audio is narrowband and high-latency.
-- **Self-test** — the `synth` step alone (decoder check only).
+- **Self-test** — the `synth` step alone (decoder check only). Requires
+  stopped: it refuses while listening rather than piping oscillator
+  tones into a live mic session (same for the Try-tab sender).
 - **Copy diagnostics report** — markdown for a capture-report issue
   (fields below). Always ask for this before follow-up questions.
 
@@ -71,9 +77,16 @@ Reading the drop histogram (case 3), most common first:
 
 - `page:` / `browser:` — full UA; tells phone vs desktop, Safari vs Chrome.
 - `secure:` — `NO` explains every mic failure; fix is HTTPS, not code.
-- `mic:` — device label (or `Default input`), track state, `inputs seen`
-  (enumerateDevices count; `unknown` = never enumerated).
-- `audio:` — context sample rate + state; `none` = never started audio.
+- `mic:` — selected picker label vs applied track label (picking another
+  input never switches a live stream; the picker is disabled during
+  capture), track state, `inputs seen` (enumerateDevices count;
+  `unknown` = never enumerated).
+- `audio:` — live context sample rate + state; after Stop, the snapshot
+  taken at teardown (`ended (was …)`); `none` = never started audio.
+- `capture:` — last mic-startup/probe failure with stage
+  (`context`/`permission`/`activate`/`probe`), error name + message,
+  failing constraint if any, and the selected device; kept across Stop.
+  `no failures recorded` when nothing failed.
 - `sym:` + `noise floor:` — setting vs current floor in dB (point value;
   the `signal:` range below is the session record).
 - `route:` — last-known mic label (+ `bluetooth`/`usb`/`headset` class
@@ -89,20 +102,28 @@ Reading the drop histogram (case 3), most common first:
   feed)` without a mic. Near-0 Δ with a loud in-band = whine; both low
   = quiet room (see the `band` check for the verdict form).
 - `hint:` — the page's likely-cause read, same text as the live hint
-  under the status line: BT route → mic-path failure → loud-room/no-lock
-  (30+ s, no preamble) → sym mismatch (loud + sweep/byte-count drops, no
-  verify). `none` when nothing matches. Trust but verify against the
-  session block — the hint compresses; the numbers are the evidence.
+  under the status line. Definite failures outrank guesses: mic-path
+  failure → capture interrupted (muted track / suspended audio) → BT
+  route → loud-room/no-lock (30+ s, no preamble) → sym mismatch (loud +
+  sweep/byte-count drops, no verify). `none` when nothing matches.
+  Trust but verify against the session block — the hint compresses;
+  the numbers are the evidence.
 - `sender:` — optional in-page sender note (sym/tone/interface); `(not
   given …)` when empty. Sym mismatch is the #1 confound: chase this
   before re-tuning thresholds.
 - `frames attempted / verified` — counts from the most recent 20 verdicts,
   including synthetic checks if run in that history; not session totals.
 - `### last checks` — the most recent Run-checks rows, if run (context,
-  audio, mic, room, clip, band, synth with ✓/✗). Absent when checks
-  never ran in this page load.
+  audio, mic, room, clip, band, synth with ✓/✗/○; ○ = blocked, could
+  not measure). Absent when checks never ran in this page load.
+- `### audio lifecycle` — timestamped session-ownership events (start
+  requested/active/failed, cancel, stop, synth refused/playing,
+  mute/unmute/end, context suspend/resume, device changes). Absent when
+  no audio session ran yet. Use it to tell a dead mic from a cancelled
+  start or a suspended clock.
 - `### drop reasons` — histogram; keys are stable across slot indices.
-- `### frame verdicts` — newest last; `repair` is `none|sweep|data|sweep+data`.
+- `### frame verdicts` — newest last; `repair` is `none|sweep|data|sweep+data`;
+  synthetic verdicts (Self-test / sender / checks) carry a `synth` tag.
 - `### previous session` — prior session's verdicts + drop counts, kept
   across one reset; absent when there is nothing stashed. Verdict lines
   carry `as text "..."` so message payloads read without decoding hex.
@@ -113,8 +134,11 @@ Reading the drop histogram (case 3), most common first:
 ## Agent playbook
 
 1. Read `secure:` first. If `NO`, stop: the fix is serving over HTTPS.
-2. Read `hint:` + `route:`: a BT flag or mic-path hint ends most phone
-   mysteries — steer to a wired/built-in/USB mic before anything else.
+2. Read `capture:` + `### audio lifecycle`: a FAILED stage names the
+   broken step (permission vs clock vs probe); cancel/stop/suspend
+   events explain empty sessions. Then `hint:` + `route:`: a mic-path or
+   interrupted hint, or a BT flag, ends most phone mysteries — steer to
+   a wired/built-in/USB mic before anything else.
    Then `sender:`: an unknown sender sym is the next confound.
 3. Read `session:` + `signal:` + `band:`: 0 attempts after minutes of
    "listening" = case 2 (nothing detected), not case 3. Floor range vs

@@ -172,6 +172,25 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
 
 ## Done
 
+- 2026-10-29 — NS-31 WebAudio/mic lifecycle hardening (Codex review
+  2026-10-29; report pasted in chat, `.scratch` copy on the owner's
+  Mac): single-flight startup with Cancel (generation guard, local
+  resource ownership until commit, late grants stopped, idempotent
+  teardown), exclusive mic-vs-synth ownership (Self-test/sender refuse
+  a live session), picker disabled during capture + devicechange/
+  visible refresh + permission-honest options + loud vanished-device
+  fallback, context created/resumed in-gesture with a running-clock
+  requirement, mute/unmute/end + suspend/resume + wake-lock-release
+  handling with frame invalidation, checks gated on a healthy clock
+  with blocked (○) rows + fresh synth verdicts, and preserved failure
+  identity (stage/name/message/constraint, selected-vs-applied route,
+  audio snapshot, lifecycle log, synth-tagged verdicts, hint
+  reordered definite-first). Codec + thresholds unchanged. Evidence:
+  new `test/webaudio.test.ts` 13 lifecycle regressions, `bun test` 81
+  pass + 1 opt-in CHR skip, tsc/lint clean, browser A/B/C1/C2/F/E/D
+  green with zero pageerrors, Python legacy 18 pass in `.venv`
+  (system python lacks numpy — pre-existing), docs/DIAG.md field
+  reference updated. Working tree only.
 - 2026-10-28 — NS-1 Publish and prove the public surfaces: created
   tikoci/enbeep (public), pushed `main` only at `add372c` (backup +
   `t3/*` refs stayed local), LFS 39/39 objects. First cycle green:

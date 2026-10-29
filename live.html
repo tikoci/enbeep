@@ -223,6 +223,7 @@
         }
         .check.ok { color: var(--ok); }
         .check.bad { color: var(--err); }
+        .check.blocked { color: var(--sync); }
 
         .report { margin-bottom: 1rem; }
         .report .controls { margin-bottom: 0.4rem; }
@@ -478,7 +479,7 @@
         <div class="controls">
             <button id="selfBtn">Self-test</button>
         </div>
-        <div class="selfnote">Self-test checks the decoder without a mic and plays a fixed demo frame through the speaker. A second device can listen; only its result tests the acoustic path. To send your own message, use the Try it tab.</div>
+        <div class="selfnote">Self-test checks the decoder without a mic and plays a fixed demo frame through the speaker. Stop listening first — it can't share a mic session. A second device can listen; only its result tests the acoustic path. To send your own message, use the Try it tab.</div>
 
         <div class="waterfall-wrap" id="waterfallWrap">
             <canvas id="waterfall"></canvas>
@@ -645,6 +646,36 @@
     // not a mic: clip + band stats are mic-path measurements and stay
     // n/a. Set alongside every resetDecode/testReset.
     let sessionIsSynth = false;
+    // --- Audio-session ownership (NS-31) ---
+    // Startup is async (permission prompt, resume, wake lock) and must
+    // be single-flight: startOp holds the live generation id (0 = none),
+    // inflightStarts counts unsettled startup attempts (a cancelled
+    // getUserMedia promise may still resolve later). At most one
+    // getUserMedia request is ever in flight; a new Start is refused
+    // until the previous attempt settles, and a late grant from a
+    // cancelled attempt has its tracks stopped immediately.
+    let startSeq = 0;
+    let startOp = 0;
+    let inflightStarts = 0;
+    // True while Self-test / Try-sender tones are scheduled: the mic
+    // and synth graphs never share a session (exclusive ownership).
+    let synthPlaying = false;
+    // Non-null while capture is interrupted but the session survives
+    // (muted track, suspended context): the in-progress frame was
+    // invalidated and fresh sync is required after recovery.
+    let captureInterrupted = null;
+    // Last startup/probe failure, kept across Stop for the report:
+    // { stage, name, message, constraint, selected, t }.
+    let micFailedDetail = null;
+    // Last live context summary, snapshotted at Stop so the report
+    // keeps sample rate + state after teardown: { sampleRate, state }.
+    let lastAudioInfo = null;
+    // Timestamped lifecycle events (cap 50, FIFO) for the report.
+    const lifeLog = [];
+    function lifeEvent(name, detail) {
+        lifeLog.push({ t: Date.now(), name, detail: detail || '' });
+        if (lifeLog.length > 50) lifeLog.shift();
+    }
 
     // --- DOM ---
     const startBtn  = document.getElementById('startBtn');
@@ -723,25 +754,48 @@
     }
 
     // --- Mic picker ---
+    // Device exposure is permission-dependent: before the first grant
+    // the list is anonymous (and often empty), so say that instead of
+    // presenting numbered guesses as a complete list. Selection never
+    // switches a live stream — the picker is disabled during capture
+    // (see refreshControls) and a vanished device falls back loudly.
     async function refreshMicList() {
+        let mics = [];
         try {
             const devs = await navigator.mediaDevices.enumerateDevices();
-            const mics = devs.filter(d => d.kind === 'audioinput');
-            const cur = micSel.value;
-            micSel.innerHTML = '<option value="">Default input</option>';
+            mics = devs.filter(d => d.kind === 'audioinput');
+            knownMics = mics.length;
+        } catch (e) {
+            knownMics = -1;
+            return; // picker stays default-only; capture itself never blocks on this
+        }
+        const cur = micSel.value;
+        micSel.innerHTML = '<option value="">Default input</option>';
+        if (mics.length && !mics.some(m => m.label)) {
+            const o = document.createElement('option');
+            o.disabled = true;
+            o.textContent = 'Mic list needs permission — Start once to reveal inputs';
+            micSel.appendChild(o);
+        } else {
             mics.forEach((m, i) => {
                 const o = document.createElement('option');
                 o.value = m.deviceId;
                 o.textContent = m.label || ('Microphone ' + (i + 1));
                 micSel.appendChild(o);
             });
-            if (cur) micSel.value = cur;
-        } catch (e) { /* labels need permission; picker stays default-only */ }
+        }
+        if (cur) {
+            micSel.value = cur;
+            if (micSel.value !== cur) {
+                log('err', '  selected mic is gone — back to Default input (Stop/Start to apply)');
+                lifeEvent('devices', 'selected device vanished; fell back to default');
+            }
+        }
     }
 
     // --- Audio ---
     startBtn.addEventListener('click', toggleListening);
-    selfBtn.addEventListener('click', playSelfTest);
+    selfBtn.addEventListener('click', () => playSelfTest(false));
     playBtn.addEventListener('click', playMessage);
     tryMsg.addEventListener('input', refreshTryMeta);
     copyDry.addEventListener('click', () => copyCmd('rosDry', copyDry));
@@ -769,54 +823,202 @@
 
     async function toggleListening() {
         if (state !== S.IDLE) { stopListening(); return; }
+        if (startOp !== 0) { // a permission prompt may be open: cancel, don't overlap
+            startOp = 0;
+            setStatus('Cancelling…');
+            lifeEvent('start', 'cancel requested');
+            refreshControls();
+            return;
+        }
+        if (inflightStarts > 0) { // cancelled attempt still unsettled: no new request
+            setStatus('Still cancelling the last request…');
+            return;
+        }
+        if (checksRunning) {
+            setStatus('Checks are running — wait for them to finish');
+            return;
+        }
+        if (synthPlaying) { // Stop was tapped mid-playback; teardown is in flight
+            setStatus('Self-test playing — wait for it to finish');
+            return;
+        }
+        const gen = ++startSeq;
+        startOp = gen;
+        await startListening(gen);
+    }
 
+    // Single-flight mic startup. Resources stay local until commit: any
+    // failure — or a Cancel that invalidates this generation — stops the
+    // acquired tracks and closes the fresh context instead of leaking a
+    // live mic the UI no longer owns.
+    async function startListening(gen) {
+        inflightStarts++;
+        refreshControls();
+        const alive = () => startOp === gen;
+        let stream = null;
+        let ctx = null;
+        let stage = 'context';
+        let outcome = 'cancelled';
+        const dropLocal = () => {
+            if (stream) {
+                try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+                stream = null;
+            }
+            if (ctx) {
+                try { ctx.close().catch(() => {}); } catch (e) {}
+                ctx = null;
+            }
+        };
         try {
+            lifeEvent('start', 'requested (' + (micSel.value ? 'selected device' : 'default input') + ')');
+            // Create + resume the context inside the user gesture, before
+            // the permission await, for autoplay-policy compliance.
+            ctx = new (window.AudioContext || window.webkitAudioContext)();
+            watchCtx(ctx);
+            try { if (ctx.state !== 'running') await ctx.resume(); } catch (e) {}
+            if (!alive()) { dropLocal(); return; }
+            stage = 'permission';
+            setStatus('Requesting microphone permission…');
             const constraints = {
                 echoCancellation: false,
                 noiseSuppression: false,
                 autoGainControl: false,
             };
             if (micSel.value) constraints.deviceId = { exact: micSel.value };
-            micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
-            const track = micStream.getAudioTracks()[0];
-            if (track) {
-                track.onended = () => micDead('Mic track ended — tap Stop, then Start');
-                track.onmute = () => micDead('Mic muted by OS — tap Stop, then Start');
-                // Requested constraints may be ignored (iOS): snapshot what
-                // the OS actually applied, for the route line + BT steerage.
-                appliedSettings = snapshotSettings(track);
-                appliedLabel = track.label || null;
-                routeClass = classifyRoute(track.label || '', appliedSettings).labelClass;
+            stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+            if (!alive()) { // uncancellable promise resolved after Cancel: own it, stop it
+                dropLocal();
+                lifeEvent('start', 'late grant after cancel — tracks stopped');
+                return;
             }
+            stage = 'activate';
+            const track = stream.getAudioTracks()[0];
+            if (!track) throw Object.assign(new Error('no audio track in the granted stream'), { name: 'NotFoundError' });
+            if (ctx.state !== 'running') {
+                try { await ctx.resume(); } catch (e) {}
+            }
+            if (ctx.state !== 'running') {
+                throw Object.assign(
+                    new Error('audio could not start (' + ctx.state + ') — tap the page to enable sound, then Start again'),
+                    { name: 'AudioSuspended' });
+            }
+            track.onended = () => micDead('Mic track ended — tap Stop, then Start');
+            track.onmute = () => interruptCapture('Mic muted by OS — unmute to resume, or tap Stop, then Start');
+            track.onunmute = () => recoverCapture('Mic unmuted');
+            // Requested constraints may be ignored (iOS): snapshot what
+            // the OS actually applied, for the route line + BT steerage.
+            const settings = snapshotSettings(track);
+            const label = track.label || null;
+            const cls = classifyRoute(track.label || '', settings).labelClass;
+            if (!alive()) { dropLocal(); return; }
+            // Commit: globals change hands exactly once, on success.
+            micStream = stream;
+            stream = null;
+            audioCtx = ctx;
+            ctx = null;
+            appliedSettings = settings;
+            appliedLabel = label;
+            routeClass = cls;
             micFailed = null;
-
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            await audioCtx.resume();
-
+            micFailedDetail = null;
+            captureInterrupted = null;
             const src = audioCtx.createMediaStreamSource(micStream);
             analyser = audioCtx.createAnalyser();
             analyser.fftSize = C.fftSize;
             analyser.smoothingTimeConstant = C.smoothing;
             src.connect(analyser);
-
             freqData = new Float32Array(analyser.frequencyBinCount);
             timeData = new Float32Array(analyser.fftSize);
             try {
-                if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen');
+                if (navigator.wakeLock) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    // Auto-release (tab hide) fires `release`: clear the
+                    // handle so the visible-return handler can re-acquire.
+                    if (wakeLock && wakeLock.addEventListener) {
+                        const held = wakeLock;
+                        held.addEventListener('release', () => { if (wakeLock === held) wakeLock = null; });
+                    }
+                }
             } catch (e) { /* unsupported — user must keep the screen awake */ }
+            if (!alive()) { // cancelled during the wake-lock await: tear down the commit
+                stopListening();
+                lifeEvent('start', 'cancelled after commit — torn down');
+                return;
+            }
+            startOp = 0;
+            outcome = 'committed';
             resetDecode();
             sessionIsSynth = false;
             setupCanvas();
             updateUI();
+            lifeEvent('start', 'active (' + (appliedLabel || 'default input') + ')');
             refreshMicList(); // labels now available
             requestAnimationFrame(tick);
         } catch (err) {
+            dropLocal();
+            if (!alive()) return; // cancelled: stay quiet
+            startOp = 0;
+            outcome = 'failed';
             const msg = err && err.message ? err.message : String(err);
             const nm = err && err.name ? err.name : '';
             micFailed = nm || msg;
+            micFailedDetail = { stage, name: nm || 'Error', message: msg,
+                constraint: err && err.constraint !== undefined ? err.constraint : null,
+                selected: micSel.value || null, t: Date.now() };
+            lifeEvent('start-failed', stage + ' (' + micFailed + '): ' + msg);
             setStatus('Mic error: ' + msg, 'error');
             log('err', '  mic start failed' + (nm ? ' (' + nm + ')' : '') + ': ' + micGuidance(nm));
+            refreshControls();
+        } finally {
+            inflightStarts--;
+            if (outcome === 'cancelled' && startOp === 0 && state === S.IDLE) {
+                setStatus('Ready');
+            }
+            refreshControls();
         }
+    }
+
+    // Watch one context's suspension cycle. Only the committed live
+    // context interrupts/resumes the session; stale (cancelled or
+    // closed) contexts only leave a lifecycle trace.
+    function watchCtx(ctx) {
+        if (!ctx || typeof ctx.addEventListener !== 'function') return;
+        ctx.addEventListener('statechange', () => {
+            lifeEvent('ctx', ctx.state);
+            if (audioCtx !== ctx || state === S.IDLE) return;
+            if (ctx.state === 'running') recoverCapture('Audio running');
+            else interruptCapture('Audio ' + ctx.state + ' — tap the page to resume');
+        });
+    }
+
+    // Invalidate the in-progress frame without touching session history:
+    // the samples from an interruption are holes, not data, so the next
+    // attempt must re-lock on fresh sync.
+    function invalidateFrame(why) {
+        if (state === S.IDLE || state === S.LISTENING) return;
+        state = S.LISTENING;
+        syncRunStart = -1;
+        lastSyncTs = -1;
+        slots = [];
+        log('err', '  ' + why + ' — frame invalidated, waiting for fresh sync');
+    }
+
+    function interruptCapture(reason) {
+        if (state === S.IDLE || captureInterrupted) return;
+        captureInterrupted = reason;
+        invalidateFrame(reason);
+        setStatus(reason, 'error');
+        lifeEvent('interrupt', reason);
+        refreshHint();
+    }
+
+    function recoverCapture(note) {
+        if (!captureInterrupted) return;
+        captureInterrupted = null;
+        log('ok', '  ' + note + ' — resuming, waiting for fresh sync');
+        setStatus('Listening — waiting for sync tone…');
+        lifeEvent('recover', note);
+        refreshHint();
     }
 
     function resetDecode() {
@@ -858,13 +1060,28 @@
         return t ? (t.readyState + (t.muted ? '/muted' : '/live')) : 'none';
     }
 
+    // Idempotent teardown: safe to call twice, mid-startup (cancels),
+    // or mid-playback (the tone loop notices the torn-down session).
     function stopListening() {
-        if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+        startOp = 0; // invalidate any pending startup; it self-cleans on settle
+        if (wakeLock) {
+            const held = wakeLock;
+            wakeLock = null;
+            try { held.release().catch(() => {}); } catch (e) {}
+        }
         if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-        if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+        if (audioCtx) {
+            try {
+                lastAudioInfo = { sampleRate: audioCtx.sampleRate, state: audioCtx.state };
+            } catch (e) { /* keep the previous snapshot */ }
+            audioCtx.close().catch(() => {});
+            audioCtx = null;
+        }
         analyser = null;
         state = S.IDLE;
+        captureInterrupted = null;
         hintEl.textContent = '';
+        lifeEvent('stop', sessionIsSynth ? 'synth session ended' : 'mic session ended');
         updateUI();
     }
 
@@ -874,8 +1091,12 @@
         if (state === S.IDLE || !analyser) return;
         if (ts === undefined) ts = performance.now();
         // rAF gap = the loop stalled (background throttle, GC): decode
-        // slots went unobserved, so count it as a dropout, not data.
-        if (lastTickTs > 0 && ts - lastTickTs > 250) ses.dropouts++;
+        // slots went unobserved, so count it as a dropout and invalidate
+        // any in-progress frame — the hole is not data.
+        if (lastTickTs > 0 && ts - lastTickTs > 250) {
+            ses.dropouts++;
+            invalidateFrame('loop gap ' + Math.round(ts - lastTickTs) + ' ms');
+        }
         lastTickTs = ts;
 
         analyser.getFloatFrequencyData(freqData);
@@ -1247,9 +1468,9 @@
     }
 
     function failFrame(why) {
-        lastVerdict = { ok: false, error: why };
+        lastVerdict = { ok: false, error: why, synth: sessionIsSynth };
         noteDrop(why);
-        frameLog.push({ t: Date.now(), ok: false, error: why, symMs });
+        frameLog.push({ t: Date.now(), ok: false, error: why, symMs, synth: sessionIsSynth });
         if (frameLog.length > 20) frameLog.shift();
         sweepDropout = false;
         dataErasure = false;
@@ -1296,10 +1517,10 @@
     // --- Result card ---
     function showResult(ok, payload, maxDf, err) {
         lastVerdict = { ok, payload: [...payload], maxDf, error: err || null,
-            sweepDropout, dataErasure };
+            sweepDropout, dataErasure, synth: sessionIsSynth };
         frameLog.push({ t: Date.now(), ok, payload: [...payload], maxDf,
             error: err || null, symMs, offsetHz: sweepOffset,
-            sweepDropout, dataErasure });
+            sweepDropout, dataErasure, synth: sessionIsSynth });
         if (frameLog.length > 20) frameLog.shift();
         let main;
         if (payload.length === 11) {
@@ -1419,22 +1640,47 @@
         return tones;
     }
 
-    async function playSelfTest() {
-        if (selfBtn.disabled) return;
+    // Self-test owns its session exclusively: while a mic session (or
+    // startup, or another playback) is active it refuses rather than
+    // piping oscillator tones into the mic analyser. fromChecks skips
+    // the checksRunning part of the guard — Run checks calls here for
+    // its synth row. Returns true only when tones actually played.
+    async function playSelfTest(fromChecks) {
+        if (!fromChecks && (state !== S.IDLE || startOp !== 0 || inflightStarts > 0
+            || checksRunning || synthPlaying)) {
+            log('err', '  self-test refused: stop listening first — synth must not share a mic session');
+            lifeEvent('synth', 'self-test refused (session busy)');
+            return false;
+        }
+        if (selfBtn.disabled && !fromChecks) return false;
         selfBtn.disabled = true;
         selfBtn.textContent = 'Playing…';
-
         const startedForTest = (state === S.IDLE);
-        if (startedForTest) startSelfTest();
-
-        // twin1 ground-truth payload (same as unit tests)
-        await playTones(tonesForFrame([2, 65, 170, 107, 44, 179, 10, 0, 2, 15, 0], symMs));
-
-        selfBtn.disabled = false;
-        selfBtn.textContent = 'Self-test';
-
-        if (startedForTest) {
-            stopListening();
+        synthPlaying = true;
+        refreshControls();
+        try {
+            if (startedForTest) await startSelfTest();
+            if (!audioCtx || !analyser || audioCtx.state !== 'running') {
+                log('err', '  self-test blocked: audio is '
+                    + (audioCtx ? audioCtx.state : 'unavailable')
+                    + ' — tap the page to enable sound, then retry');
+                return false;
+            }
+            lifeEvent('synth', 'self-test playing');
+            // twin1 ground-truth payload (same as unit tests)
+            await playTones(tonesForFrame([2, 65, 170, 107, 44, 179, 10, 0, 2, 15, 0], symMs));
+            return true;
+        } catch (err) {
+            log('err', '  self-test failed: ' + (err && err.message ? err.message : err));
+            return false;
+        } finally {
+            synthPlaying = false;
+            selfBtn.disabled = false;
+            selfBtn.textContent = 'Self-test';
+            // The user may have stopped mid-playback: only tear down a
+            // session that is still ours.
+            if (startedForTest && state !== S.IDLE) stopListening();
+            else refreshControls();
         }
     }
 
@@ -1444,26 +1690,40 @@
     // stretching 28 tones to 29 slots.
     async function playTones(tones) {
         const ctx = audioCtx;
+        const an = analyser;
+        if (!ctx || !an) return;
         const gain = ctx.createGain();
         gain.gain.value = 0.3;
         gain.connect(ctx.destination);
-        gain.connect(analyser);
+        gain.connect(an);
 
-        let t = ctx.currentTime + 0.05;
-        for (const [freq, ms] of tones) {
-            const osc = ctx.createOscillator();
-            osc.frequency.value = freq;
-            osc.type = 'sine';
-            osc.connect(gain);
-            osc.start(t);
-            osc.stop(t + ms / 1000);
-            osc.onended = () => osc.disconnect();
-            t += ms / 1000;
+        try {
+            let t = ctx.currentTime + 0.05;
+            for (const [freq, ms] of tones) {
+                const osc = ctx.createOscillator();
+                osc.frequency.value = freq;
+                osc.type = 'sine';
+                osc.connect(gain);
+                osc.start(t);
+                osc.stop(t + ms / 1000);
+                osc.onended = () => osc.disconnect();
+                t += ms / 1000;
+            }
+
+            // Wait on the AUDIO clock, then let the END sync register
+            // before teardown. Wall-clock sleep would tear down early if
+            // the context suspends mid-play; the wall cap keeps a dead
+            // clock from hanging the UI, and session teardown exits now.
+            const endAudio = t + 1.0;
+            const wallCap = performance.now()
+                + Math.max(0, t - ctx.currentTime) * 1000 + 1200 + 15000;
+            while (audioCtx === ctx && ctx.state !== 'closed'
+                && ctx.currentTime < endAudio && performance.now() < wallCap) {
+                await sleep(100);
+            }
+        } finally {
+            try { gain.disconnect(); } catch (e) {}
         }
-
-        // Wait out the frame, then let the END sync register before teardown
-        await sleep((t - ctx.currentTime) * 1000 + 1200);
-        gain.disconnect();
     }
 
     // --- Try-tab message sender ---
@@ -1488,28 +1748,47 @@
     }
 
     async function playMessage() {
-        if (playBtn.disabled) return;
+        if (state !== S.IDLE || startOp !== 0 || inflightStarts > 0
+            || checksRunning || synthPlaying) {
+            tryErr.textContent = 'Stop listening first — the sender must not share a mic session.';
+            lifeEvent('synth', 'sender refused (session busy)');
+            return false;
+        }
+        if (playBtn.disabled) return false;
         const enc = encodeMessage(tryMsg.value);
         if (!enc.ok) {
             tryErr.textContent = enc.error;
-            return;
+            return false;
         }
         tryErr.textContent = '';
         playBtn.disabled = true;
         playBtn.textContent = 'Playing…';
-
         const startedForTest = (state === S.IDLE);
-        if (startedForTest) startSelfTest();
-        // Cold-start guard: never schedule on a suspended clock.
-        try { if (audioCtx.state !== 'running') await audioCtx.resume(); } catch (e) {}
-
-        await playTones(senderTones(enc.bytes, symMs));
-
-        playBtn.disabled = false;
-        playBtn.textContent = 'Play message';
-
-        if (startedForTest) {
-            stopListening();
+        synthPlaying = true;
+        refreshControls();
+        try {
+            if (startedForTest) await startSelfTest();
+            // Cold-start guard: never schedule on a suspended clock.
+            if (!audioCtx || !analyser || audioCtx.state !== 'running') {
+                tryErr.textContent = 'Audio is suspended — tap the page to enable sound, then retry.';
+                log('err', '  sender blocked: audio is '
+                    + (audioCtx ? audioCtx.state : 'unavailable'));
+                return false;
+            }
+            lifeEvent('synth', 'sender playing ' + enc.bytes.length + ' bytes');
+            await playTones(senderTones(enc.bytes, symMs));
+            return true;
+        } catch (err) {
+            tryErr.textContent = 'Playback failed: ' + (err && err.message ? err.message : err);
+            return false;
+        } finally {
+            synthPlaying = false;
+            playBtn.disabled = false;
+            playBtn.textContent = 'Play message';
+            // The user may have stopped mid-playback: only tear down a
+            // session that is still ours.
+            if (startedForTest && state !== S.IDLE) stopListening();
+            else refreshControls();
         }
     }
 
@@ -1555,8 +1834,13 @@
         setTimeout(() => { btn.textContent = label; }, 1500);
     }
 
-    function startSelfTest() {
+    // Synth session setup (Self-test / Try sender). Resumes explicitly
+    // like every other entry point; callers verify a running clock
+    // before scheduling tones.
+    async function startSelfTest() {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        watchCtx(audioCtx);
+        try { if (audioCtx.state !== 'running') await audioCtx.resume(); } catch (e) {}
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = C.fftSize;
         analyser.smoothingTimeConstant = C.smoothing;
@@ -1582,10 +1866,41 @@
         return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    function updateUI() {
-        if (state === S.IDLE) {
+    // One place for control availability. Start is always tappable
+    // (Start / Cancel / Stop); everything that would share or steal the
+    // audio session is disabled while one is active, starting, or
+    // settling — including the mic picker, whose selection never
+    // switches a live stream. Never touches Self-test/sender button
+    // text (their 'Playing…' state lives with the playback).
+    function refreshControls() {
+        const active = state !== S.IDLE;
+        const starting = startOp !== 0 || inflightStarts > 0;
+        const busy = active || starting || checksRunning || synthPlaying;
+        selfBtn.disabled = busy;
+        playBtn.disabled = busy;
+        checksBtn.disabled = busy;
+        micSel.disabled = active || starting || checksRunning;
+        micSel.title = micSel.disabled
+            ? 'Stop listening to change the microphone (picking another input never switches a live stream)'
+            : '';
+        if (startOp !== 0) {
+            startBtn.textContent = 'Cancel';
+            startBtn.className = '';
+        } else if (starting && !active) {
+            startBtn.textContent = 'Starting…';
+            startBtn.className = '';
+        } else if (active) {
+            startBtn.textContent = 'Stop';
+            startBtn.className = 'listening';
+        } else {
             startBtn.textContent = 'Start Listening';
             startBtn.className = '';
+        }
+    }
+
+    function updateUI() {
+        refreshControls();
+        if (state === S.IDLE) {
             setStatus('Ready');
             freqLabel.textContent = '—';
             nibLabel.textContent = '—';
@@ -1593,12 +1908,8 @@
             freqLabel.classList.remove('active');
             nibLabel.classList.remove('active');
             confLabel.classList.remove('active');
-        } else {
-            startBtn.textContent = 'Stop';
-            startBtn.className = 'listening';
-            if (state === S.LISTENING) {
-                setStatus('Listening — waiting for sync tone…');
-            }
+        } else if (state === S.LISTENING) {
+            setStatus('Listening — waiting for sync tone…');
         }
     }
 
@@ -1718,11 +2029,16 @@
     // Likely-cause hint from session evidence (also rendered live under
     // the status line). First match wins; null = nothing to suggest.
     function computeHint() {
-        if (btRouteActive()) {
-            return 'Bluetooth mic suspected — disconnect BT / switch to a wired, built-in, or USB mic';
-        }
+        // Definite path failures outrank the Bluetooth heuristic: a
+        // broken capture is known, a suspect route is a guess.
         if (micFailed || micDeadFired) {
             return 'Mic path broken, not acoustic — ' + micGuidance(micFailed || '');
+        }
+        if (captureInterrupted) {
+            return 'Capture interrupted — ' + captureInterrupted;
+        }
+        if (btRouteActive()) {
+            return 'Bluetooth mic suspected — disconnect BT / switch to a wired, built-in, or USB mic';
         }
         if (ses && ses.locks === 0 && ses.floorMax > C.roomMaxDb
             && (ses.lastTs - ses.t0) / 1000 > 30) {
@@ -1745,7 +2061,9 @@
     function micGuidance(name) {
         switch (name) {
             case 'NotAllowedError':
-                return 'Mic permission denied: allow the mic in the address bar, then reload and Start again.';
+                return 'Mic permission denied: allow the mic in the browser site settings; if already allowed, check the OS privacy settings, then reload and Start again.';
+            case 'AudioSuspended':
+                return 'Audio could not start: tap the page to enable sound, then Start again.';
             case 'NotFoundError':
             case 'OverconstrainedError':
                 return 'No mic found: connect or enable an input device, then pick it in the Microphone box.';
@@ -1779,12 +2097,13 @@
 
     function verdictLine(f) {
         const t = new Date(f.t).toISOString().slice(11, 19);
+        const src = f.synth ? ' · synth' : '';
         if (f.ok) {
             return '- [' + t + '] ✓ ' + payloadText(f.payload)
                 + ' · sym ' + f.symMs + 'ms · offset ' + f1hz(f.offsetHz)
-                + ' Hz · maxDf ' + f.maxDf.toFixed(0) + ' Hz · repair ' + repairName(f);
+                + ' Hz · maxDf ' + f.maxDf.toFixed(0) + ' Hz · repair ' + repairName(f) + src;
         }
-        return '- [' + t + '] ✗ ' + f.error + ' · sym ' + f.symMs + 'ms';
+        return '- [' + t + '] ✗ ' + f.error + ' · sym ' + f.symMs + 'ms' + src;
     }
 
     function stashSession() {
@@ -1853,6 +2172,23 @@
         return 'Default input';
     }
 
+    function audioLine() {
+        if (audioCtx) return audioCtx.sampleRate + ' Hz · ' + audioCtx.state;
+        if (lastAudioInfo) {
+            return lastAudioInfo.sampleRate + ' Hz · ended (was ' + lastAudioInfo.state + ')';
+        }
+        return 'none (start listening or run checks)';
+    }
+
+    function captureLine() {
+        if (!micFailedDetail) return 'no failures recorded';
+        const d = micFailedDetail;
+        const when = new Date(d.t).toISOString().slice(11, 19);
+        return 'FAILED @' + d.stage + ' (' + d.name + '): ' + d.message
+            + (d.constraint ? ' [constraint ' + d.constraint + ']' : '')
+            + ' · selected ' + (d.selected || 'default') + ' · ' + when;
+    }
+
     function buildReport() {
         const lines = [];
         const secure = typeof window === 'undefined' ? null
@@ -1864,11 +2200,11 @@
         lines.push('- browser: ' + (navigator.userAgent || '(unknown)'));
         lines.push('- secure: ' + (secure === null ? 'unknown'
             : (secure ? 'yes (' + proto + ')' : 'NO (' + proto + ' — mic will fail)')));
-        lines.push('- mic: ' + micLabel() + ' (' + micState() + ') · inputs seen: '
+        lines.push('- mic: selected ' + micLabel() + ' · applied '
+            + (appliedLabel || 'none yet') + ' (' + micState() + ') · inputs seen: '
             + (knownMics < 0 ? 'unknown' : knownMics));
-        lines.push('- audio: ' + (audioCtx
-            ? (audioCtx.sampleRate + ' Hz · ' + audioCtx.state)
-            : 'none (start listening or run checks)'));
+        lines.push('- audio: ' + audioLine());
+        lines.push('- capture: ' + captureLine());
         lines.push('- sym: ' + symMs + ' ms · noise floor: ' + floorDb.toFixed(0) + ' dB');
         lines.push('- route: ' + routeLine());
         lines.push('- session: ' + sessionLine());
@@ -1882,7 +2218,15 @@
         if (checkResults.length) {
             lines.push('### last checks (' + checkResults.length + ')');
             for (const r of checkResults) {
-                lines.push('  [' + (r.ok ? '✓' : '✗') + '] ' + r.name + ' — ' + r.detail);
+                lines.push('  [' + (r.blocked ? '○' : r.ok ? '✓' : '✗') + '] '
+                    + r.name + ' — ' + r.detail);
+            }
+        }
+        if (lifeLog.length) {
+            lines.push('### audio lifecycle (' + lifeLog.length + ')');
+            for (const e of lifeLog.slice(-20)) {
+                lines.push('- [' + new Date(e.t).toISOString().slice(11, 19) + '] '
+                    + e.name + (e.detail ? ': ' + e.detail : ''));
             }
         }
         lines.push('');
@@ -1939,8 +2283,8 @@
         checksEl.innerHTML = '';
         for (const r of rows) {
             const div = document.createElement('div');
-            div.className = 'check ' + (r.ok ? 'ok' : 'bad');
-            div.textContent = (r.ok ? '✓ ' : '✗ ') + r.name + ' — ' + r.detail;
+            div.className = 'check ' + (r.blocked ? 'blocked' : r.ok ? 'ok' : 'bad');
+            div.textContent = (r.blocked ? '○ ' : r.ok ? '✓ ' : '✗ ') + r.name + ' — ' + r.detail;
             checksEl.appendChild(div);
         }
         if (checksRunning) {
@@ -1953,22 +2297,27 @@
 
     async function runChecks() {
         if (checksRunning) return;
-        if (state !== S.IDLE) {
+        if (state !== S.IDLE || startOp !== 0 || inflightStarts > 0) {
             checkResults = [{ name: 'pre', ok: false, detail: 'Stop listening, then run checks.' }];
             renderChecks(checkResults);
             return;
         }
         checksRunning = true;
+        refreshControls();
         checkResults = [];
         renderChecks(checkResults);
-        const push = (name, ok, detail) => {
-            checkResults.push({ name, ok, detail });
+        const push = (name, ok, detail, blocked) => {
+            checkResults.push({ name, ok, detail, blocked: !!blocked });
             renderChecks(checkResults);
         };
+        const blockAcoustics = (why) => {
+            for (const n of ['room', 'clip', 'band']) push(n, false, 'blocked: ' + why, true);
+        };
+        let AC = null;
+        try {
         const secure = typeof window.isSecureContext === 'boolean' ? window.isSecureContext : true;
         push('context', secure, location.protocol + '//' + location.host
             + (secure ? ' · secure context' : ' · INSECURE — mic will fail'));
-        let AC = null;
         try {
             AC = new (window.AudioContext || window.webkitAudioContext)();
             if (AC.state === 'suspended') {
@@ -1978,7 +2327,7 @@
             push('audio', AC.state === 'running',
                 AC.sampleRate + ' Hz · ' + AC.state
                 + (typeof lat === 'number' ? ' · ' + Math.round(lat * 1000) + ' ms' : '')
-                + (AC.state === 'running' ? '' : ' (could not start)'));
+                + (AC.state === 'running' ? '' : ' (could not start — tap the page to enable sound)'));
         } catch (e) {
             push('audio', false, 'AudioContext failed: ' + (e && e.message ? e.message : e));
         }
@@ -1986,6 +2335,7 @@
             const devs = await navigator.mediaDevices.enumerateDevices();
             knownMics = devs.filter((d) => d.kind === 'audioinput').length;
         } catch (e) { knownMics = -1; }
+        lifeEvent('checks', 'probe starting');
         let stream = null;
         try {
             // Probe the SELECTED mic, not whatever the default is: room,
@@ -2004,7 +2354,19 @@
             appliedLabel = (track && track.label) || null;
             routeClass = classifyRoute(label, appliedSettings).labelClass;
             micFailed = null;
+            micFailedDetail = null;
             const actx = AC || new (window.AudioContext || window.webkitAudioContext)();
+            if (actx.state !== 'running') {
+                try { await actx.resume(); } catch (e) { /* stays suspended */ }
+            }
+            // No running clock, no samples: a suspended context feeds the
+            // analyser silence, which would read as a dead mic + quiet room.
+            if (actx.state !== 'running') {
+                push('mic', false, 'blocked: audio clock is ' + actx.state
+                    + ' — tap the page to enable sound, then re-run', true);
+                blockAcoustics('no running audio clock (see mic row)');
+                if (!AC) await actx.close().catch(() => {});
+            } else {
             const src = actx.createMediaStreamSource(stream);
             const an = actx.createAnalyser();
             an.fftSize = 2048;
@@ -2076,30 +2438,45 @@
                 const cv = clipVerdict(totN ? clipN / totN : 0, tPeak);
                 push('clip', cv.ok, cv.detail);
             } else {
-                push('clip', true, 'unavailable on this browser (no time-domain API)');
+                push('clip', false, 'blocked: unavailable on this browser (no time-domain API)', true);
             }
             const toDb = (p, n) => (n > 0 && p > 0 ? 10 * Math.log10(p / n) : -Infinity);
             const bv = bandVerdict(toDb(inPow, inN), toDb(outPow, outN));
             push('band', bv.ok, bv.detail);
+            refreshMicList(); // labels now available after the grant
+            } // end clock-gated probe
         } catch (e) {
             const nm = (e && e.name) || '';
-            micFailed = nm || String(e);
+            const msg = e && e.message ? e.message : String(e);
+            micFailed = nm || msg;
+            micFailedDetail = { stage: 'probe', name: nm || 'Error', message: msg,
+                constraint: e && e.constraint !== undefined ? e.constraint : null,
+                selected: micSel.value || null, t: Date.now() };
             push('mic', false, (nm ? nm + ': ' : '') + micGuidance(nm));
+            blockAcoustics('no mic capture (see mic row)');
+            lifeEvent('checks', 'probe failed (' + micFailed + ')');
         } finally {
             if (stream) stream.getTracks().forEach((t) => t.stop());
         }
         try {
-            await playSelfTest();
-            const v = lastVerdict;
-            push('synth', !!(v && v.ok), (v && v.ok)
+            const before = lastVerdict;
+            const played = await playSelfTest(true);
+            // Fresh verdict only: a stale pass from an earlier session is
+            // not evidence this check decoded anything.
+            const v = lastVerdict !== before ? lastVerdict : null;
+            push('synth', !!(played && v && v.ok), (v && v.ok)
                 ? ('verified ' + v.payload.length + ' bytes · maxDf ' + v.maxDf.toFixed(0) + ' Hz')
-                : ('rejected: ' + ((v && v.error) || 'no verdict')));
+                : ('rejected: ' + ((v && v.error) || (played ? 'no verdict' : 'self-test did not run'))));
         } catch (e) {
             push('synth', false, 'self-test threw: ' + (e && e.message ? e.message : e));
         }
-        if (AC) AC.close().catch(() => {});
-        checksRunning = false;
-        renderChecks(checkResults);
+        lifeEvent('checks', 'done');
+        } finally {
+            if (AC) AC.close().catch(() => {});
+            checksRunning = false;
+            refreshControls();
+            renderChecks(checkResults);
+        }
     }
 
     // --- Deterministic test surface ---
@@ -2163,17 +2540,40 @@
         return fin === before ? null : fin;
     }
 
+    // Lifecycle snapshot for the deterministic audio-session tests
+    // (test/webaudio.test.ts): session ownership, failure identity, and
+    // the control states the session implies. Read-only copies.
+    function sessionSnapshot() {
+        return { state, starting: startOp !== 0, inflight: inflightStarts,
+            synthPlaying, checksRunning, sessionIsSynth,
+            interrupted: captureInterrupted, dead: micDeadFired,
+            micFailed, micFailedDetail: micFailedDetail ? { ...micFailedDetail } : null,
+            appliedLabel, startLabel: startBtn.textContent,
+            selfDisabled: selfBtn.disabled, playDisabled: playBtn.disabled,
+            checksDisabled: checksBtn.disabled, micDisabled: micSel.disabled,
+            micValue: micSel.value, status: statusEl.textContent,
+            tryErr: tryErr.textContent,
+            life: lifeLog.map((e) => ({ ...e })) };
+    }
+
     // Test surface: pure helpers plus the state-machine driver.
     window.__enbeep = { fletcher16, tonesForFrame, senderTones, freqToNibble, encodeMessage, C,
         classifyRoute, roomVerdict, clipVerdict, bandVerdict,
         _selftest: { startSelfTest, stopListening },
         _test: { reset: testReset, feed: testFeed, verdict: () => lastVerdict,
             report: buildReport, runPlan: testFeedPlan,
-            checks: () => ({ running: checksRunning, results: checkResults.map((r) => ({ ...r })) }) } };
+            checks: () => ({ running: checksRunning, results: checkResults.map((r) => ({ ...r })) }),
+            // Audio-session lifecycle (stub-audio tests drive these).
+            start: toggleListening, stop: stopListening,
+            selfTest: () => playSelfTest(false), play: () => playMessage(),
+            runChecks, devices: refreshMicList,
+            setTryMsg: (v) => { tryMsg.value = v; },
+            session: sessionSnapshot } };
 
     // Init
     document.addEventListener('visibilitychange', async () => {
         if (document.hidden && state !== S.IDLE && ses) ses.hidden++;
+        if (!document.hidden) refreshMicList(); // devices may have changed away
         // Wake locks die with visibility; re-acquire when back (mic may
         // still need a Stop/Start — micDead will say so).
         if (!document.hidden && state !== S.IDLE && !wakeLock) {
@@ -2182,6 +2582,13 @@
             } catch (e) {}
         }
     });
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices
+        && typeof navigator.mediaDevices.addEventListener === 'function') {
+        navigator.mediaDevices.addEventListener('devicechange', () => {
+            lifeEvent('devices', 'devicechange');
+            refreshMicList();
+        });
+    }
     window.addEventListener('load', () => { setupCanvas(); refreshMicList(); });
     window.addEventListener('resize', () => { if (state !== S.IDLE) setupCanvas(); });
     symSel.addEventListener('change', () => { symMs = Number(symSel.value) || 200; refreshTryMeta(); });

@@ -207,6 +207,8 @@ export function decodeRecording(
         // byte-count verdict (message-stable: v1 format breaks still read
         // "byte count", never "checksum mismatch").
         if (re?.ok) return re;
+        const reCount = repairCount(nibs, frqs);
+        if (reCount?.ok) return reCount;
       }
       return fail({ ...margined, len }, `byte count ${bytes.length} != len+3 for len=${len}`);
     }
@@ -232,6 +234,26 @@ export function decodeRecording(
     return verify(
       [hi, ...sNibs],
       [offsetHz + BASE_FREQ + hi * STEP, ...sFrqs],
+      true,
+      false,
+    );
+  };
+
+  // Post-SEP corruption (NS-22 bigdude trial): slot 0 (LEN hi-nibble) reads
+  // loud-but-wrong instead of erased — grid correct, all tones confident,
+  // count exact. Force LEN from the frame size, require LEN lo to agree
+  // (only slot 0 may disagree), re-verify gated on Fletcher-16.
+  // Mirrored in live.html.
+  const repairCount = (cNibs: number[], cFrqs: number[]): FrameResult | null => {
+    if (cNibs.length % 2 !== 0) return null;
+    const wantLen = cNibs.length / 2 - 3;
+    if (wantLen < 0 || wantLen > 255) return null;
+    const hi = wantLen >> 4;
+    const lo = wantLen & 15;
+    if (cNibs[1] !== lo) return null;
+    return verify(
+      [hi, ...cNibs.slice(1)],
+      [offsetHz + BASE_FREQ + hi * STEP, ...cFrqs.slice(1)],
       true,
       false,
     );

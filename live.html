@@ -1183,6 +1183,20 @@
             return verifyLive([hi, ...sNibs],
                 [sweepOffset + C.baseFreq + hi * C.step, ...sFrqs]);
         };
+        // Count-mismatch repair (NS-22 bigdude trial): same shape, but the
+        // grid is correct and slot 0 reads loud-but-wrong instead of
+        // erased — no nibble is dropped, slot 0 is forced from the frame
+        // size instead. LEN lo must agree (only slot 0 may disagree);
+        // Fletcher-16 gates, never a blind accept. Mirrored in frame.ts.
+        const repairCountLive = (cNibs, cFrqs) => {
+            if (cNibs.length % 2 !== 0) return null;
+            const wantLen = cNibs.length / 2 - 3;
+            if (wantLen < 0 || wantLen > 255) return null;
+            const hi = wantLen >> 4, lo = wantLen & 15;
+            if (cNibs[1] !== lo) return null;
+            return verifyLive([hi, ...cNibs.slice(1)],
+                [sweepOffset + C.baseFreq + hi * C.step, ...cFrqs.slice(1)]);
+        };
         const terminal = (v, erased) => {
             if (!v.ok && v.kind !== 'fletcher') {
                 return failFrame(v.kind === 'margin'
@@ -1226,6 +1240,8 @@
             // on success; failure keeps the original byte-count verdict.
             const r = repairLive(nibbles.slice(0, -1), frqs.slice(0, -1));
             if (r && r.ok) return terminal(r, true);
+            const rc = repairCountLive(nibbles, frqs);
+            if (rc && rc.ok) return terminal(rc, true);
         }
         return terminal(v, false);
     }

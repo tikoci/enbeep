@@ -192,6 +192,18 @@ test("live pierce-class frame (masked sweep+data slot 0) verifies via repair", (
   expect(v?.dataErasure).toBe(true);
 });
 
+test("live confident-wrong LEN hi-nibble repairs via count (bigdude yo)", () => {
+  const payload = [121, 111]; // "yo": LEN 0x02, 5 bytes on air
+  const tones = live.tonesForFrame(payload, 200);
+  // Post-SEP corruption: data slot 0 reads loud-but-wrong, not erased.
+  const d0 = tones[dataStartOf(tones)];
+  if (!d0) throw new Error("no data slot 0");
+  d0[0] += 200; // nibble 0 -> 2: LEN 0x02 -> 0x22
+  const v = feedPlan(tones, 200);
+  expect(v?.ok).toBe(true);
+  expect(v?.payload).toEqual(payload);
+});
+
 test("live masked sweep alone verifies via repair", () => {
   const tones = live.tonesForFrame(PIERCE_PAYLOAD, 400);
   maskSweep0(tones, 400);

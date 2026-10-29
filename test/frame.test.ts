@@ -186,6 +186,20 @@ test("straddled grid (confident wrong LEN) repairs via fallback", () => {
   expect(res.sumOk).toBe(true);
 });
 
+test("confident-wrong LEN hi-nibble repairs via count (bigdude yo)", () => {
+  const tones = tonesForPayload([121, 111], 200);
+  const dataStart = 1 + 16 + 1;
+  const s0 = tones[dataStart];
+  if (!s0) throw new Error("tone plan too short");
+  s0.freq += 200; // LEN 0x02 -> 0x22, loud and confident
+  const res = decodeRecording(renderTones(tones, SR), SR, 200);
+  expect(res.ok).toBe(true);
+  expect(res.dataErasure).toBe(true);
+  expect(res.len).toBe(2);
+  expect(res.payload).toEqual([121, 111]);
+  expect(res.sumOk).toBe(true);
+});
+
 test("straddled grid with corrupt interior still rejects byte count", () => {
   const tones = tonesForPayload(TWIN1_PAYLOAD, 200);
   const dataStart = 1 + 16 + 1;

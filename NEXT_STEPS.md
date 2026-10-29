@@ -202,7 +202,20 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   armed. Evidence: 4 new `test/webaudio.test.ts` regressions (17 total
   in file; verified to fail on the pre-fix page while the other 13
   pass), `bun test` 85 pass + 1 skip, tsc/lint clean, browser
-  A/B/C1/C2/F/E/D green. CodeRabbit review still pending at push time.
+  A/B/C1/C2/F/E/D green.
+- 2026-10-29 — NS-31 review follow-ups (CodeRabbit, PR #4): post-commit
+  setup failures now release the committed mic/context via
+  `stopListening` and report at a new `setup` stage (its Major on
+  pending `resume()` was already fixed by the previous push); the
+  checks probe closes a local context even on mid-probe throws;
+  recovery requires a live unmuted track plus a running clock (no
+  cross-clearing); `playTones` reports whether the audio finished and
+  both callers pass it up; an unplayed synth check reports blocked.
+  Evidence: 3 new + 2 strengthened `test/webaudio.test.ts` tests (20
+  in file; the 4 behavior-change tests fail on the pre-fix page while
+  the other 16 pass), `bun test` 88 pass + 1 skip, tsc/lint clean,
+  browser A/B/C1/C2/F/E/D green. The stub-button fix this round also
+  made two earlier tests exercise their real paths.
 - 2026-10-28 — NS-1 Publish and prove the public surfaces: created
   tikoci/enbeep (public), pushed `main` only at `add372c` (backup +
   `t3/*` refs stayed local), LFS 39/39 objects. First cycle green:

@@ -884,6 +884,7 @@
         let ctx = null;
         let stage = 'context';
         let outcome = 'cancelled';
+        let committed = false;
         const dropLocal = () => {
             if (stream) {
                 try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
@@ -939,6 +940,8 @@
             stream = null;
             audioCtx = ctx;
             ctx = null;
+            committed = true;
+            stage = 'setup';
             appliedSettings = settings;
             appliedLabel = label;
             routeClass = cls;
@@ -984,7 +987,12 @@
             requestAnimationFrame(tick);
         } catch (err) {
             dropLocal();
-            if (!alive()) return; // cancelled: stay quiet
+            const wasCommitted = committed;
+            // Setup failed after the commit (graph build, wake lock, UI):
+            // release the mic + context instead of leaking a live session
+            // the UI no longer owns, then report — the start failed.
+            if (wasCommitted) stopListening();
+            if (!alive() && !wasCommitted) return; // cancelled pre-commit: stay quiet
             startOp = 0;
             outcome = 'failed';
             const msg = err && err.message ? err.message : String(err);
@@ -1045,6 +1053,13 @@
 
     function recoverCapture(note) {
         if (!captureInterrupted) return;
+        // One flag, two failure sources: only recover when the live path
+        // is actually healthy, so a context resume cannot clear a mic
+        // mute (or a dead track) while no audio reaches the decoder. The
+        // matching recovery event retries this same gate.
+        const t = micStream ? micStream.getAudioTracks()[0] : null;
+        if (t && (t.muted || t.readyState !== 'live')) return;
+        if (audioCtx && audioCtx.state !== 'running') return;
         captureInterrupted = null;
         // Fresh sync required: no run from before (or during) the hole
         // may complete afterwards.
@@ -1712,8 +1727,7 @@
             }
             lifeEvent('synth', 'self-test playing');
             // twin1 ground-truth payload (same as unit tests)
-            await playTones(tonesForFrame([2, 65, 170, 107, 44, 179, 10, 0, 2, 15, 0], symMs));
-            return true;
+            return await playTones(tonesForFrame([2, 65, 170, 107, 44, 179, 10, 0, 2, 15, 0], symMs));
         } catch (err) {
             log('err', '  self-test failed: ' + (err && err.message ? err.message : err));
             return false;
@@ -1732,10 +1746,12 @@
     // Self-test (fixed demo payload) and the Try-tab sender (user message).
     // Sample-accurate scheduling: sleep()-based pacing drifts ~7 ms/tone,
     // stretching 28 tones to 29 slots.
+    // True only when every scheduled tone actually played: a wall-cap
+    // exit (suspended clock) or a mid-play Stop is not a success.
     async function playTones(tones) {
         const ctx = audioCtx;
         const an = analyser;
-        if (!ctx || !an) return;
+        if (!ctx || !an) return false;
         const gain = ctx.createGain();
         gain.gain.value = 0.3;
         gain.connect(ctx.destination);
@@ -1765,6 +1781,7 @@
                 && ctx.currentTime < endAudio && performance.now() < wallCap) {
                 await sleep(100);
             }
+            return audioCtx === ctx && ctx.state !== 'closed' && ctx.currentTime >= endAudio;
         } finally {
             try { gain.disconnect(); } catch (e) {}
         }
@@ -1820,8 +1837,7 @@
                 return false;
             }
             lifeEvent('synth', 'sender playing ' + enc.bytes.length + ' bytes');
-            await playTones(senderTones(enc.bytes, symMs));
-            return true;
+            return await playTones(senderTones(enc.bytes, symMs));
         } catch (err) {
             tryErr.textContent = 'Playback failed: ' + (err && err.message ? err.message : err);
             return false;
@@ -2385,6 +2401,7 @@
         } catch (e) { knownMics = -1; }
         lifeEvent('checks', 'probe starting');
         let stream = null;
+        let actx = null;
         try {
             // Probe the SELECTED mic, not whatever the default is: room,
             // clip, and band verdicts must describe the input the user
@@ -2403,7 +2420,7 @@
             routeClass = classifyRoute(label, appliedSettings).labelClass;
             micFailed = null;
             micFailedDetail = null;
-            const actx = AC || new (window.AudioContext || window.webkitAudioContext)();
+            actx = AC || new (window.AudioContext || window.webkitAudioContext)();
             await resumeBounded(actx);
             // No running clock, no samples: a suspended context feeds the
             // analyser silence, which would read as a dead mic + quiet room.
@@ -2503,16 +2520,25 @@
             lifeEvent('checks', 'probe failed (' + micFailed + ')');
         } finally {
             if (stream) stream.getTracks().forEach((t) => t.stop());
+            // A mid-probe throw must not leak the local context (close is
+            // idempotent; the success path already closed it).
+            if (actx && actx !== AC) actx.close().catch(() => {});
         }
         try {
             const before = lastVerdict;
             const played = await playSelfTest(true);
             // Fresh verdict only: a stale pass from an earlier session is
-            // not evidence this check decoded anything.
+            // not evidence this check decoded anything. No fresh verdict
+            // and no completed playback means nothing was measured:
+            // blocked, not rejected.
             const v = lastVerdict !== before ? lastVerdict : null;
-            push('synth', !!(played && v && v.ok), (v && v.ok)
-                ? ('verified ' + v.payload.length + ' bytes · maxDf ' + v.maxDf.toFixed(0) + ' Hz')
-                : ('rejected: ' + ((v && v.error) || (played ? 'no verdict' : 'self-test did not run'))));
+            if (!played && !v) {
+                push('synth', false, 'blocked: self-test did not complete (audio suspended?)', true);
+            } else {
+                push('synth', !!(v && v.ok), (v && v.ok)
+                    ? ('verified ' + v.payload.length + ' bytes · maxDf ' + v.maxDf.toFixed(0) + ' Hz')
+                    : ('rejected: ' + ((v && v.error) || 'no verdict')));
+            }
         } catch (e) {
             push('synth', false, 'self-test threw: ' + (e && e.message ? e.message : e));
         }

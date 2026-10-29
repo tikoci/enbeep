@@ -14,7 +14,8 @@ In-page tools (Diagnostics tab):
   `room` (resting p10 level), `clip` (time-domain hot fraction), `band`
   (in-band vs out-of-band energy), then `synth` (in-page decode with no
   mic — must produce a fresh verdict from this run, never reuse an
-  older one). Requires IDLE. Rows are pass (✓), fail (✗), or blocked
+  older one; an unstarted or interrupted playback reports blocked, not
+  rejected). Requires IDLE. Rows are pass (✓), fail (✗), or blocked
   (○): without a running audio clock or a mic capture, the acoustic
   rows report blocked instead of measuring silence, and `clip` is
   blocked (not passing) on browsers without the time-domain API (e.g.
@@ -84,9 +85,9 @@ Reading the drop histogram (case 3), most common first:
 - `audio:` — live context sample rate + state; after Stop, the snapshot
   taken at teardown (`ended (was …)`); `none` = never started audio.
 - `capture:` — last mic-startup/probe failure with stage
-  (`context`/`permission`/`activate`/`probe`), error name + message,
-  failing constraint if any, and the selected device; kept across Stop.
-  `no failures recorded` when nothing failed.
+  (`context`/`permission`/`activate`/`setup`/`probe`), error name +
+  message, failing constraint if any, and the selected device; kept
+  across Stop. `no failures recorded` when nothing failed.
 - `sym:` + `noise floor:` — setting vs current floor in dB (point value;
   the `signal:` range below is the session record).
 - `route:` — last-known mic label (+ `bluetooth`/`usb`/`headset` class

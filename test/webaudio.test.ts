@@ -139,6 +139,7 @@ interface PageScript {
   ctxStartSuspended?: boolean;
   ctxResumeStuck?: boolean;
   ctxResumeHangs?: boolean;
+  failGraph?: boolean;
   wakeLock?: boolean;
 }
 
@@ -293,6 +294,7 @@ class FakeCtx {
     this.state = "closed";
   }
   createMediaStreamSource(_s: unknown): { connect(): void; disconnect(): void } {
+    if (this.script.failGraph) throw new Error("graph boom");
     return { connect() {}, disconnect() {} };
   }
   createAnalyser(): FakeAnalyser {
@@ -418,6 +420,12 @@ function loadPage(script: PageScript = {}): LoadedPage {
   const micSel = new MiniSelect();
   const els: Record<string, AnyRecord> = {
     micSel: micSel as unknown as AnyRecord,
+    // Buttons need real disabled/text state: the guards read them, and a
+    // proxy's absorb-anything function is truthy (would fake "disabled").
+    startBtn: makeEl({ textContent: "Start Listening", className: "", disabled: false }),
+    selfBtn: makeEl({ textContent: "Self-test", disabled: false }),
+    playBtn: makeEl({ textContent: "Play message", disabled: false }),
+    checksBtn: makeEl({ textContent: "Run checks", disabled: false }),
     symSel: makeEl({ value: "200" }),
     waterfall: makeEl({ width: 0, height: 0, getContext: () => gfx }),
     waterfallWrap: makeEl({
@@ -644,6 +652,7 @@ test("checks synth row needs a fresh verdict, not a stale pass", async () => {
   const synth = rows.find((r) => r.name === "synth");
   expect(t.gainTotal()).toBeGreaterThan(0); // tones really played this run
   expect(synth?.ok).toBe(false); // …but no NEW verdict: rAF never ticks here
+  expect(synth?.blocked).toBe(false); // completed playback judges the verdict
   expect(synth?.detail).toContain("no verdict");
 });
 
@@ -811,7 +820,60 @@ test("hung resume cannot wedge startup, playback, or checks", async () => {
   expect(rows.length).toBe(7);
   expect(rows.find((r) => r.name === "audio")?.ok).toBe(false);
   expect(rows.find((r) => r.name === "mic")?.blocked).toBe(true);
+  const synth = rows.find((r) => r.name === "synth");
+  expect(synth?.blocked).toBe(true); // unplayed synth is blocked, not rejected
   expect(t.api.session().checksRunning).toBe(false);
+});
+
+test("post-commit setup failure releases the mic and reports", async () => {
+  const t = loadPage({ failGraph: true });
+  await t.api.start();
+  const s = t.api.session();
+  expect(s.state).toBe("idle");
+  expect(s.micFailedDetail?.stage).toBe("setup");
+  expect(s.status).toContain("Mic error"); // reported, not a quiet leak
+  expect(s.startLabel).toBe("Start Listening");
+  expect(t.streams[0]?.tracks[0]?.stopped).toBe(true);
+  expect(t.ctxInstances[0]?.closed).toBe(true);
+  expect(t.api.report()).toContain("- capture: FAILED @setup");
+});
+
+test("recovery waits for a healthy path (no cross-clearing)", async () => {
+  const t = loadPage();
+  await t.api.start();
+  const track = t.streams[0]?.tracks[0];
+  const ctx = t.ctxInstances[0];
+  expect(track).toBeDefined();
+  expect(ctx).toBeDefined();
+  if (track) track.muted = true; // OS mutes without firing yet
+  ctx?.fireState("suspended");
+  expect(t.api.session().interrupted).toContain("suspended");
+  ctx?.fireState("running"); // resume must NOT clear the live mute
+  expect(t.api.session().interrupted).toContain("suspended");
+  if (track) track.muted = false;
+  track?.onunmute?.();
+  expect(t.api.session().interrupted).toBeNull();
+  // An ended track never recovers either.
+  track?.onmute?.();
+  expect(t.api.session().interrupted).toContain("muted");
+  track?.stop();
+  if (track) track.muted = false;
+  track?.onunmute?.();
+  expect(t.api.session().interrupted).toContain("muted");
+  t.api.stop();
+});
+
+test("Stop mid-play reports incomplete playback, controls restored", async () => {
+  const t = loadPage();
+  const p = t.api.selfTest();
+  for (let i = 0; i < 200 && t.gainTotal() === 0; i++) await Bun.sleep(5);
+  expect(t.gainTotal()).toBeGreaterThan(0); // tones scheduled, wait loop spinning
+  t.api.stop(); // user bails out before the audio clock finishes
+  expect(await p).toBe(false);
+  const s = t.api.session();
+  expect(s.synthPlaying).toBe(false);
+  expect(s.state).toBe("idle");
+  expect(s.selfDisabled).toBe(false);
 });
 
 test("wake-lock auto-release clears the handle so return re-acquires", async () => {

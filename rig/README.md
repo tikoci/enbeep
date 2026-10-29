@@ -30,7 +30,7 @@ Run as `bun run rig/capture.ts ...` / `bun run rig/analyze.ts ...`
 ## Standard run
 
 1. Paste-load the encoder on the router ([encode/README.md](../encode/README.md)
-   recipe A — paste, not `/import`; globals don't survive reboot).
+   recipe A paste; globals don't survive reboot).
 2. Dry-run through centrs (silent, prints ground truth):
    `centrs execute --yes <name> -- '$enbeepAnnounce "bridge" <row> 200ms 200ms yes'`
    (`--yes`: even the dry-run classifies as write-shaped — it's an

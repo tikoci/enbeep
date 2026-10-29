@@ -169,8 +169,16 @@ maybe(
       // One compound call: fetch-parse + transmit share a single API
       // session, so the encoder globals never cross a session boundary
       // (observed: fetch-load in one call, transmit rejected in the
-      // next). Require both API success and a verified capture: audio
-      // growth alone must not turn an API rejection into a green test.
+      // next). Transport auto-selects (REST/native-api on a CHR VM).
+      // Load method is fetch+parse rather than `/import`: `/import`
+      // needs a file staged on guest flash plus carries the 7.16
+      // nesting bug (see encode/README.md) — while fetch+parse behaves
+      // exactly like a paste with no flash file. centrs (not hand-rolled
+      // HTTP)
+      // resolves the VM's credentials, validates the command before
+      // sending it, and returns a typed envelope. Require both API
+      // success and a verified capture: audio growth alone must not
+      // turn an API rejection into a green test.
       const compound =
         `[:parse ([/tool/fetch url="http://10.0.2.2:${port}/enbeep.rsc" output=user as-value]->"data")]; ` +
         `$enbeepText "Hello" 200ms 200ms no`;

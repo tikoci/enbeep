@@ -35,7 +35,7 @@ are the primitives used here; measured hardware behavior is recorded in
    this is not yet a usable acoustic sender.
 2. Paste the complete contents of [enbeep.rsc](enbeep.rsc)
    into that terminal. If multiline paste is troublesome, use recipe A
-   below. Do not `/import` it as a substitute on 7.16.
+   below.
 3. Run `/interface print` and `/ip address print` in that terminal.
    Choose the interface whose MAC you want and the IPv4 entry to send
    (these are selected independently). An address row number works in

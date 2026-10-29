@@ -75,9 +75,8 @@ need a beeper and microphone.
 2. Follow [the encoder loading instructions](encode/README.md). They
    cover a terminal paste or SSH, choosing your interface and IPv4
    address, and a silent dry-run. (The page's **Try it** tab lists the
-   same load + `$enbeepText` commands.) On 7.16, loading via `/import`
-   or the API has failed; use the paste/SSH recipe. `/tool fetch`
-   loading is still an experiment.
+   same load + `$enbeepText` commands.) `/tool fetch` loading is
+   still an experiment.
 3. In that router terminal, after loading, run this example with **your
    interface and address selection**:
 

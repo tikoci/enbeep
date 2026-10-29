@@ -20,10 +20,10 @@
 #   /system/script/environment/remove [find where name~"enbeep"]
 #
 # Nested globals follow the scripting manual: each body re-declares the
-# globals it calls (:global enbeepTone; etc.), so loading via /import or
-# [:parse ...] resolves the same way a CLI paste does. A 7.16 /import
-# nesting failure predates this hardening and still needs a re-test on
-# real 7.16 hardware; until then, paste remains the verified recipe.
+# globals it calls (:global enbeepTone; etc.), so [:parse ...] and fetch
+# loading resolve the same way a CLI paste does. Load-method history and
+# the remaining 7.16 re-test live in encode/README.md; until then, paste
+# remains the verified recipe.
 # Single-line transport: strip #-lines, join with spaces (the trailing
 # `;` on every block closer makes this safe).
 #

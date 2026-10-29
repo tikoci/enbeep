@@ -8,9 +8,9 @@
 #   round toward 0 on tested hardware (hAP ac lite).  Only 200ms symbols
 #   are reliable: ~193ms effective duration (97% of nominal).
 #
-# Usage:
-#   /import file-name=enbeep-200ms.rsc
-#   $enbeep200ms
+# Usage: paste the file into a terminal, then run $enbeep200ms.
+# (Do not stage scripts on flash for /import; the load scheme is CLI
+# globals, fetch+parse, or /system/script — see encode/README.md.)
 #
 # Record the output and analyze with:
 #   bun run convert && bun run analyze -- samples/<file>.wav

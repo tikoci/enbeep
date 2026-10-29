@@ -940,7 +940,13 @@ test("cancelled checks free playback; late probe grant is stopped", async () => 
   const d = deferred<FakeStream>();
   const t = loadPage({ gum: () => d.promise });
   const p = t.api.runChecks(); // probe "prompt" open
-  for (let i = 0; i < 200 && !t.api.session().checksRunning; i++) await Bun.sleep(5);
+  // Pin the interleaving: cancel only once the request is actually out,
+  // so the late grant below exercises the prompt-open path (cancelling
+  // earlier never prompts at all — see "cancelling checks before the
+  // mic request never prompts").
+  for (let i = 0; i < 200 && t.gumCalls.length === 0; i++) await Bun.sleep(5);
+  expect(t.gumCalls.length).toBe(1);
+  expect(t.api.session().checksRunning).toBe(true);
   expect(t.api.session().checksLabel).toBe("Cancel");
   await t.api.runChecks(); // cancel tap
   const cancelled = t.api.session();
@@ -1008,5 +1014,128 @@ test("wake-lock auto-release clears the handle so return re-acquires", async () 
   doc.hidden = false;
   for (const f of vis) await f();
   expect(t.wakeRequests).toBe(2);
+  // The re-acquired handle carries the same release handling: a second
+  // auto-release clears it too, so the following return re-acquires.
+  t.sentinels[1]?.__fireRelease();
+  doc.hidden = true;
+  for (const f of vis) await f();
+  doc.hidden = false;
+  for (const f of vis) await f();
+  expect(t.wakeRequests).toBe(3);
   t.api.stop();
+});
+
+test("ended track invalidates the frame and parks the loop", async () => {
+  const t = loadPage();
+  await t.api.start();
+  // Drive LISTENING -> SWEEP: a long sync run, then its end.
+  const thresh = -55 + 12;
+  for (let ts = 0; ts <= 900; ts += 50) {
+    t.api.feed(ts, true, 2500, thresh - 20, thresh, thresh + 25, thresh - 20);
+  }
+  t.api.feed(1000, false, 2000, thresh + 25, thresh, thresh - 20, thresh + 25);
+  expect(t.api.session().state).toBe("sweep");
+  const track = t.streams[0]?.tracks[0];
+  expect(track).toBeDefined();
+  if (track) track.readyState = "ended";
+  track?.onended?.();
+  const dead = t.api.session();
+  expect(dead.dead).toBe(true);
+  expect(dead.state).toBe("listening"); // in-progress frame invalidated
+  expect(dead.interrupted).toContain("ended"); // loop parked until a new session
+  expect(dead.status).toContain("Mic track ended");
+  // Loud frozen data after death decodes nothing (the tick skip): later
+  // silence must not mint codec/drop diagnoses on a known-dead path.
+  const tick = t.ticks[0];
+  const an = t.ctxInstances[0]?.analysers[0];
+  if (an) an.mode = "sync";
+  let ts = 20000;
+  for (let i = 0; i < 70; i++) {
+    ts += 1000 / 60;
+    tick?.(ts);
+  }
+  expect(t.api.session().state).toBe("listening");
+  // A healthy loop would have banked >800 ms of sync above; the parked
+  // loop banked nothing, so a trailing edge cannot lock a sweep.
+  t.api.feed(ts + 16, false, 2000, thresh + 25, thresh, thresh - 20, thresh + 25);
+  expect(t.api.session().state).toBe("listening");
+  expect(t.api.report()).toContain("frames attempted: 0");
+  // And no recovery event can clear a dead path.
+  t.ctxInstances[0]?.fireState("running");
+  track?.onunmute?.();
+  expect(t.api.session().interrupted).toContain("ended");
+  t.api.stop();
+});
+
+test("checks block acoustic rows when the clock suspends mid-probe", async () => {
+  const t = loadPage();
+  const p = t.api.runChecks();
+  await Bun.sleep(1100); // measuring half (the probe runs 2 s)
+  t.ctxInstances[0]?.fireState("suspended");
+  await p;
+  const rows = t.api.checks().results;
+  for (const n of ["mic", "room", "clip", "band"]) {
+    expect(rows.find((r) => r.name === n)?.blocked).toBe(true);
+  }
+  expect(rows.find((r) => r.name === "mic")?.detail).toContain("mid-probe");
+  expect(lifeHas(t, "checks", "probe interrupted")).toBe(true);
+});
+
+test("checks block acoustic rows when the probe track dies or mutes", async () => {
+  const t = loadPage();
+  const p = t.api.runChecks();
+  await Bun.sleep(1100);
+  const track = t.streams[0]?.tracks[0];
+  expect(track).toBeDefined();
+  if (track) track.readyState = "ended";
+  await p;
+  const rows = t.api.checks().results;
+  for (const n of ["mic", "room", "clip", "band"]) {
+    expect(rows.find((r) => r.name === n)?.blocked).toBe(true);
+  }
+  expect(rows.find((r) => r.name === "mic")?.detail).toContain("ended mid-probe");
+  const t2 = loadPage();
+  const p2 = t2.api.runChecks();
+  await Bun.sleep(1100);
+  const track2 = t2.streams[0]?.tracks[0];
+  expect(track2).toBeDefined();
+  if (track2) track2.muted = true;
+  await p2;
+  const rows2 = t2.api.checks().results;
+  for (const n of ["mic", "room", "clip", "band"]) {
+    expect(rows2.find((r) => r.name === n)?.blocked).toBe(true);
+  }
+  expect(rows2.find((r) => r.name === "mic")?.detail).toContain("muted mid-probe");
+});
+
+test("cancelling checks before the mic request never prompts", async () => {
+  const d = deferred<FakeStream>();
+  const t = loadPage({ ctxStartSuspended: true, ctxResumeHangs: true, gum: () => d.promise });
+  t.api.setOpTimeout(25);
+  const p = t.api.runChecks();
+  await t.api.runChecks(); // cancel tap while the resume is stuck
+  await Bun.sleep(60); // past the bounded resume: the dead run must not prompt
+  expect(t.gumCalls.length).toBe(0);
+  d.resolve(newMicStream("Late Probe"));
+  await p;
+  expect(t.gumCalls.length).toBe(0);
+  const settled = t.api.session();
+  expect(settled.checksRunning).toBe(false);
+  expect(settled.checksInflight).toBe(0);
+  expect(t.api.checks().results.map((r) => r.name)).toEqual(["cancelled"]);
+});
+
+test("checks Cancel stays enabled through the synth phase", async () => {
+  const t = loadPage();
+  const p = t.api.runChecks();
+  for (let i = 0; i < 400 && !t.api.session().synthPlaying; i++) await Bun.sleep(10);
+  const synth = t.api.session();
+  expect(synth.synthPlaying).toBe(true);
+  expect(synth.checksRunning).toBe(true);
+  expect(synth.checksLabel).toBe("Cancel");
+  expect(synth.checksDisabled).toBe(false); // the button honours its own label
+  await t.api.runChecks(); // cancel through the advertised path
+  await p;
+  expect(t.api.checks().results.map((r) => r.name)).toEqual(["cancelled"]);
+  expect(t.api.session().checksInflight).toBe(0);
 });

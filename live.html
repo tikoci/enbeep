@@ -566,6 +566,17 @@
     let freqData = null;
     let timeData = null;
     let wakeLock = null;
+    // Single owner for the lock handle: startup and the
+    // visibility-return path share it, so every grant — first or
+    // re-acquired — clears itself on auto-release (a stale truthy
+    // handle would block re-acquisition forever).
+    function holdWakeLock(lock) {
+        wakeLock = lock;
+        if (wakeLock && wakeLock.addEventListener) {
+            const held = wakeLock;
+            held.addEventListener('release', () => { if (wakeLock === held) wakeLock = null; });
+        }
+    }
     let symMs = 200;             // active symbol length for this frame
 
     // Sync-run tracking (timestamp based, dropout-tolerant)
@@ -966,13 +977,7 @@
                 if (navigator.wakeLock) {
                     const req = navigator.wakeLock.request('screen');
                     if ((await settleBefore(req, opTimeoutMs)) === 'ok') {
-                        try { wakeLock = await req; } catch (e) { wakeLock = null; }
-                        // Auto-release (tab hide) fires `release`: clear the
-                        // handle so the visible-return handler can re-acquire.
-                        if (wakeLock && wakeLock.addEventListener) {
-                            const held = wakeLock;
-                            held.addEventListener('release', () => { if (wakeLock === held) wakeLock = null; });
-                        }
+                        try { holdWakeLock(await req); } catch (e) { wakeLock = null; }
                     } else {
                         // Late grant after the timeout: release it — this
                         // sentinel never reaches wakeLock, so Stop cannot.
@@ -1122,6 +1127,14 @@
         setStatus(msg, 'error');
         log('err', '  ' + msg);
         postFrame({ ok: false, error: msg, symMs });
+        // Terminal loss: the in-progress frame can never complete on a
+        // dead path, and the loop must park until a new session — later
+        // silence minting codec/drop diagnoses would misattribute the
+        // failure. Recovery can never clear an ended track (its health
+        // gate requires readyState 'live'), so the interruption flag
+        // doubles as the permanent decode gate.
+        invalidateFrame(msg);
+        interruptCapture(msg);
         refreshHint();
     }
 
@@ -1961,7 +1974,10 @@
         const busy = active || starting || checksRunning || synthPlaying;
         selfBtn.disabled = busy;
         playBtn.disabled = busy;
-        checksBtn.disabled = active || starting || synthPlaying || checksSettling;
+        // A live run is always cancellable: the synth phase sets both
+        // `active` (its own session) and `synthPlaying`, which would
+        // otherwise disable the button while it reads Cancel.
+        checksBtn.disabled = (active || starting || synthPlaying || checksSettling) && !checksRunning;
         if (checksRunning) checksBtn.textContent = 'Cancel';
         else if (checksSettling) checksBtn.textContent = 'Cancelling…';
         else checksBtn.textContent = 'Run checks';
@@ -2453,6 +2469,10 @@
                 echoCancellation: false, noiseSuppression: false, autoGainControl: false,
             };
             if (micSel.value) constraints.deviceId = { exact: micSel.value };
+            // Cancelled during the resume/enumerate awaits above: never
+            // open a permission prompt for a dead run (it would also wedge
+            // Listen + new checks behind checksInflight if ignored).
+            if (checksOp !== gen) return;
             stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
             // Cancelled while the prompt was open: the finally below stops
             // the late grant; adopt nothing, report nothing.
@@ -2496,8 +2516,16 @@
             const framePeaks = [];
             let peak = -Infinity, sumSq = 0, nSamp = 0, clipN = 0, totN = 0, tPeak = 0;
             let inPow = 0, inN = 0, outPow = 0, outN = 0;
+            // A running clock at probe start proves nothing about the 2 s
+            // after it: a suspension, mute, or ended track mid-probe feeds
+            // the analyser silence or frozen data, which would read as a
+            // dead mic + quiet room. Abort the measurement instead.
+            let probeBlocked = null;
             const t0 = performance.now();
             while (performance.now() - t0 < 2000 && checksOp === gen) {
+                if (actx.state !== 'running') { probeBlocked = 'audio clock ' + actx.state + ' mid-probe'; break; }
+                if (track.readyState !== 'live') { probeBlocked = 'mic track ended mid-probe'; break; }
+                if (track.muted) { probeBlocked = 'mic muted mid-probe'; break; }
                 const measure = performance.now() - t0 >= 1000;
                 an.getFloatFrequencyData(buf);
                 let fp = -Infinity, fi = 0, fin = 0, fo = 0, fon = 0;
@@ -2533,29 +2561,38 @@
             if (checksOp !== gen) return;
             src.disconnect();
             if (!AC) await actx.close().catch(() => {});
-            const rmsDb = nSamp > 0 && sumSq > 0 ? 10 * Math.log10(sumSq / nSamp) : -Infinity;
-            const rdb = (v) => (v === -Infinity ? '-inf' : v.toFixed(0));
-            const route = classifyRoute(label, appliedSettings);
-            const btFlag = route.btSuspect
-                ? ' · BLUETOOTH route suspected — disconnect BT / use a wired or USB mic' : '';
-            push('mic', peak > C.micMinDb, label + ' · peak ' + rdb(peak)
-                + ' · RMS ' + (hasTime ? rdb(rmsDb) + ' dBFS' : 'n/a') + ' · '
-                + formatSettings(appliedSettings) + btFlag
-                + (peak > C.micMinDb ? '' : ' (silent — wrong device or muted?)'));
-            framePeaks.sort((x, y) => x - y);
-            const p10 = framePeaks.length
-                ? framePeaks[Math.floor(framePeaks.length * 0.1)] : -Infinity;
-            const rv = roomVerdict(p10);
-            push('room', rv.ok, rv.detail);
-            if (hasTime) {
-                const cv = clipVerdict(totN ? clipN / totN : 0, tPeak);
-                push('clip', cv.ok, cv.detail);
+            if (probeBlocked) {
+                // Interrupted measurement: the partial samples are holes,
+                // not evidence — block the dependent rows, don't interpret
+                // stale/zero data as acoustic verdicts.
+                push('mic', false, 'blocked: ' + probeBlocked + ' — re-run checks', true);
+                blockAcoustics(probeBlocked + ' (see mic row)');
+                lifeEvent('checks', 'probe interrupted (' + probeBlocked + ')');
             } else {
-                push('clip', false, 'blocked: unavailable on this browser (no time-domain API)', true);
+                const rmsDb = nSamp > 0 && sumSq > 0 ? 10 * Math.log10(sumSq / nSamp) : -Infinity;
+                const rdb = (v) => (v === -Infinity ? '-inf' : v.toFixed(0));
+                const route = classifyRoute(label, appliedSettings);
+                const btFlag = route.btSuspect
+                    ? ' · BLUETOOTH route suspected — disconnect BT / use a wired or USB mic' : '';
+                push('mic', peak > C.micMinDb, label + ' · peak ' + rdb(peak)
+                    + ' · RMS ' + (hasTime ? rdb(rmsDb) + ' dBFS' : 'n/a') + ' · '
+                    + formatSettings(appliedSettings) + btFlag
+                    + (peak > C.micMinDb ? '' : ' (silent — wrong device or muted?)'));
+                framePeaks.sort((x, y) => x - y);
+                const p10 = framePeaks.length
+                    ? framePeaks[Math.floor(framePeaks.length * 0.1)] : -Infinity;
+                const rv = roomVerdict(p10);
+                push('room', rv.ok, rv.detail);
+                if (hasTime) {
+                    const cv = clipVerdict(totN ? clipN / totN : 0, tPeak);
+                    push('clip', cv.ok, cv.detail);
+                } else {
+                    push('clip', false, 'blocked: unavailable on this browser (no time-domain API)', true);
+                }
+                const toDb = (p, n) => (n > 0 && p > 0 ? 10 * Math.log10(p / n) : -Infinity);
+                const bv = bandVerdict(toDb(inPow, inN), toDb(outPow, outN));
+                push('band', bv.ok, bv.detail);
             }
-            const toDb = (p, n) => (n > 0 && p > 0 ? 10 * Math.log10(p / n) : -Infinity);
-            const bv = bandVerdict(toDb(inPow, inN), toDb(outPow, outN));
-            push('band', bv.ok, bv.detail);
             refreshMicList(); // labels now available after the grant
             } // end clock-gated probe
         } catch (e) {
@@ -2712,7 +2749,13 @@
         // still need a Stop/Start — micDead will say so).
         if (!document.hidden && state !== S.IDLE && !wakeLock) {
             try {
-                if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen');
+                if (navigator.wakeLock) {
+                    const lock = await navigator.wakeLock.request('screen');
+                    // Stopped while the request was in flight: release the
+                    // late grant instead of holding a lock with no session.
+                    if (state === S.IDLE) lock.release().catch(() => {});
+                    else holdWakeLock(lock);
+                }
             } catch (e) {}
         }
     });

@@ -238,6 +238,20 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   all 3 fail on the pre-fix page while the other 23 pass), `bun test`
   94 pass + 1 skip, tsc/lint clean, browser A/B/C1/C2/F/E/D green,
   docs/DIAG.md notes the Cancel behavior.
+- 2026-10-29 — NS-31 review follow-ups, round 5 (Codex + Macroscope,
+  PR #4): an ended mic track now invalidates the in-progress frame
+  and parks the decode loop until a new session (recovery can never
+  clear a dead path); the checks probe watches clock/track health
+  mid-measurement and blocks the dependent rows instead of reporting
+  passes on stale samples; cancelling before the checks mic request
+  never opens a permission prompt; wake-lock re-acquisition shares
+  startup's release handling (plus late-grant release when stopped
+  mid-request); the checks button stays an enabled Cancel through
+  the synth phase. Evidence: 5 new + 1 extended
+  `test/webaudio.test.ts` tests (31 in file; all 6 fail on the
+  pre-fix page while the other 25 pass), `bun test` 99 pass + 1
+  skip, tsc/lint clean, browser A/B/C1/C2/F/E/D green, docs/DIAG.md
+  notes the mid-probe blocks + Cancel behavior.
 - 2026-10-28 — NS-1 Publish and prove the public surfaces: created
   tikoci/enbeep (public), pushed `main` only at `add372c` (backup +
   `t3/*` refs stayed local), LFS 39/39 objects. First cycle green:

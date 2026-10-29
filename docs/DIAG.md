@@ -16,13 +16,16 @@ In-page tools (Diagnostics tab):
   mic — must produce a fresh verdict from this run, never reuse an
   older one; an unstarted or interrupted playback reports blocked, not
   rejected). Requires IDLE. The button reads Cancel while a run is in
-  flight (e.g. a pending permission prompt): cancelling frees
-  mic-free playback at once, stops any late probe grant, and leaves a
-  `cancelled` row. Rows are pass (✓), fail (✗), or blocked
-  (○): without a running audio clock or a mic capture, the acoustic
-  rows report blocked instead of measuring silence, and `clip` is
-  blocked (not passing) on browsers without the time-domain API (e.g.
-  iOS pre-14.1). Thresholds: mic peak ≤ −90 dBFS = dead; room
+  flight, including the synth phase (e.g. a pending permission
+  prompt): cancelling frees mic-free playback at once, stops any late
+  probe grant, never prompts when cancelled before the mic request,
+  and leaves a `cancelled` row. Rows are pass (✓), fail (✗), or
+  blocked (○): without a running audio clock or a mic capture, the
+  acoustic rows report blocked instead of measuring silence — as they
+  do when the clock suspends or the track mutes/ends mid-probe — and
+  `clip` is blocked (not passing) on browsers without the
+  time-domain API (e.g. iOS pre-14.1). Thresholds: mic peak ≤ −90
+  dBFS = dead; room
   resting > −45 dBFS = too loud; clip > 0.1% samples over 0.99 = too
   hot; in-band > −50 dBFS while within 6 dB of out-of-band = whine
   in 1.8–4.1 kHz. A `BLUETOOTH route suspected` flag (explicit

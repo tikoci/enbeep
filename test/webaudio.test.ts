@@ -1139,3 +1139,37 @@ test("checks Cancel stays enabled through the synth phase", async () => {
   expect(t.api.checks().results.map((r) => r.name)).toEqual(["cancelled"]);
   expect(t.api.session().checksInflight).toBe(0);
 });
+
+test("concurrent wake-lock re-acquires never orphan a grant", async () => {
+  const t = loadPage({ wakeLock: true });
+  await t.api.start();
+  const vis = t.docListeners.visibilitychange ?? [];
+  const doc = t.docStub as Record<string, unknown>;
+  // OS auto-release clears the handle; two returns then race the
+  // re-acquire (both see no handle before either grant lands).
+  t.sentinels[0]?.__fireRelease();
+  doc.hidden = false;
+  await Promise.all([...vis.map((f) => f()), ...vis.map((f) => f())]);
+  expect(t.wakeRequests).toBe(3);
+  // The losing grant is released at once instead of overwriting the
+  // held one; Stop then releases the winner — nothing left held.
+  expect(t.sentinels[2]?.__releases()).toBe(1);
+  t.api.stop();
+  expect(t.sentinels[1]?.__releases()).toBe(1);
+});
+
+test("checks probe of a trackless grant reports a missing input", async () => {
+  const t = loadPage({ gum: () => Promise.resolve(new FakeStream([])) });
+  await t.api.runChecks();
+  const rows = t.api.checks().results;
+  const mic = rows.find((r) => r.name === "mic");
+  expect(mic?.ok).toBe(false);
+  expect(mic?.detail).toContain("NotFoundError");
+  for (const n of ["room", "clip", "band"]) {
+    expect(rows.find((r) => r.name === n)?.blocked).toBe(true);
+  }
+  const s = t.api.session();
+  expect(s.micFailed).toBe("NotFoundError");
+  expect(s.micFailedDetail?.stage).toBe("probe");
+  expect(s.checksInflight).toBe(0);
+});

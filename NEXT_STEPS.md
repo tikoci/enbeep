@@ -252,6 +252,15 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   pre-fix page while the other 25 pass), `bun test` 99 pass + 1
   skip, tsc/lint clean, browser A/B/C1/C2/F/E/D green, docs/DIAG.md
   notes the mid-probe blocks + Cancel behavior.
+- 2026-10-29 — NS-31 review follow-ups, round 6 (Claude, PR #4): a
+  wake-lock re-acquire that lands while another grant already holds
+  the handle (a second visibility return, or Stop/Start mid-request)
+  is released instead of overwriting and orphaning the held lock; the
+  checks probe treats a trackless grant as `NotFoundError` (same as
+  startup) instead of crashing in the probe loop. Evidence: 2 new
+  `test/webaudio.test.ts` regressions (33 in file; both fail on the
+  pre-fix page while the other 31 pass), `bun test` 101 pass + 1
+  skip, tsc/lint clean, browser A/B/C1/C2/F/E/D green.
 - 2026-10-28 — NS-1 Publish and prove the public surfaces: created
   tikoci/enbeep (public), pushed `main` only at `add372c` (backup +
   `t3/*` refs stayed local), LFS 39/39 objects. First cycle green:

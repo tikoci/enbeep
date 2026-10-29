@@ -2478,11 +2478,14 @@
             // the late grant; adopt nothing, report nothing.
             if (checksOp !== gen) return;
             const track = stream.getAudioTracks()[0];
-            const label = (track && track.label) || 'unlabelled input';
+            // Same contract as startListening: a trackless grant is a
+            // missing input, not a crash inside the probe loop.
+            if (!track) throw Object.assign(new Error('no audio track in the granted stream'), { name: 'NotFoundError' });
+            const label = track.label || 'unlabelled input';
             // Persist the applied path for the report, even if the user
             // never presses Start (checks-then-report flow).
-            appliedSettings = track ? snapshotSettings(track) : null;
-            appliedLabel = (track && track.label) || null;
+            appliedSettings = snapshotSettings(track);
+            appliedLabel = track.label || null;
             routeClass = classifyRoute(label, appliedSettings).labelClass;
             micFailed = null;
             micFailedDetail = null;
@@ -2751,9 +2754,11 @@
             try {
                 if (navigator.wakeLock) {
                     const lock = await navigator.wakeLock.request('screen');
-                    // Stopped while the request was in flight: release the
-                    // late grant instead of holding a lock with no session.
-                    if (state === S.IDLE) lock.release().catch(() => {});
+                    // Stopped while the request was in flight, or another
+                    // grant (a second return, a fresh session) already holds
+                    // the handle: release the late one — overwriting would
+                    // orphan a lock Stop can no longer reach.
+                    if (state === S.IDLE || wakeLock) lock.release().catch(() => {});
                     else holdWakeLock(lock);
                 }
             } catch (e) {}

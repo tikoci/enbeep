@@ -190,7 +190,19 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   pass + 1 opt-in CHR skip, tsc/lint clean, browser A/B/C1/C2/F/E/D
   green with zero pageerrors, Python legacy 18 pass in `.venv`
   (system python lacks numpy — pre-existing), docs/DIAG.md field
-  reference updated. Working tree only.
+  reference updated. Posted as PR #4 (branch
+  `fix/ns-31-webaudio-lifecycle`); review follow-ups below.
+- 2026-10-29 — NS-31 review follow-ups (Macroscope, PR #4): bound
+  every pending audio promise (5 resume sites + wake-lock request +
+  checks enumeration share a 5 s `settleBefore` race, shrinkable via
+  `_test`), so a stuck autoplay promise can no longer wedge startup,
+  playback, or checks; sync tracking now resets on loop gaps,
+  interruption, and recovery (a gap no longer counts toward the 800 ms
+  preamble); the tick loop decodes nothing while interrupted but stays
+  armed. Evidence: 4 new `test/webaudio.test.ts` regressions (17 total
+  in file; verified to fail on the pre-fix page while the other 13
+  pass), `bun test` 85 pass + 1 skip, tsc/lint clean, browser
+  A/B/C1/C2/F/E/D green. CodeRabbit review still pending at push time.
 - 2026-10-28 — NS-1 Publish and prove the public surfaces: created
   tikoci/enbeep (public), pushed `main` only at `add372c` (backup +
   `t3/*` refs stayed local), LFS 39/39 objects. First cycle green:

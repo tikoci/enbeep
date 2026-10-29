@@ -676,6 +676,31 @@
         lifeLog.push({ t: Date.now(), name, detail: detail || '' });
         if (lifeLog.length > 50) lifeLog.shift();
     }
+    // Bound for audio promises that may never settle (a stuck autoplay
+    // resume would otherwise wedge startup/playback/checks with controls
+    // disabled and no path to cleanup). Tests shrink it via _test.
+    const OP_TIMEOUT_MS = 5000;
+    let opTimeoutMs = OP_TIMEOUT_MS;
+    // 'ok' when the promise settles in time (resolved or rejected —
+    // callers observe state, not the outcome), else 'timeout'. Never
+    // rejects and never leaves an unhandled rejection behind.
+    async function settleBefore(promise, ms) {
+        let timer = null;
+        try {
+            const timeout = new Promise((resolve) => {
+                timer = setTimeout(() => resolve('timeout'), ms);
+            });
+            return await Promise.race([promise.then(() => 'ok', () => 'ok'), timeout]);
+        } finally {
+            if (timer !== null) clearTimeout(timer);
+        }
+    }
+    async function resumeBounded(ctx) {
+        if (!ctx || ctx.state === 'running') return;
+        try {
+            await settleBefore(ctx.resume(), opTimeoutMs);
+        } catch (e) { /* stays suspended; callers check state */ }
+    }
 
     // --- DOM ---
     const startBtn  = document.getElementById('startBtn');
@@ -875,7 +900,7 @@
             // the permission await, for autoplay-policy compliance.
             ctx = new (window.AudioContext || window.webkitAudioContext)();
             watchCtx(ctx);
-            try { if (ctx.state !== 'running') await ctx.resume(); } catch (e) {}
+            await resumeBounded(ctx);
             if (!alive()) { dropLocal(); return; }
             stage = 'permission';
             setStatus('Requesting microphone permission…');
@@ -894,9 +919,7 @@
             stage = 'activate';
             const track = stream.getAudioTracks()[0];
             if (!track) throw Object.assign(new Error('no audio track in the granted stream'), { name: 'NotFoundError' });
-            if (ctx.state !== 'running') {
-                try { await ctx.resume(); } catch (e) {}
-            }
+            await resumeBounded(ctx);
             if (ctx.state !== 'running') {
                 throw Object.assign(
                     new Error('audio could not start (' + ctx.state + ') — tap the page to enable sound, then Start again'),
@@ -931,12 +954,17 @@
             timeData = new Float32Array(analyser.fftSize);
             try {
                 if (navigator.wakeLock) {
-                    wakeLock = await navigator.wakeLock.request('screen');
-                    // Auto-release (tab hide) fires `release`: clear the
-                    // handle so the visible-return handler can re-acquire.
-                    if (wakeLock && wakeLock.addEventListener) {
-                        const held = wakeLock;
-                        held.addEventListener('release', () => { if (wakeLock === held) wakeLock = null; });
+                    const req = navigator.wakeLock.request('screen');
+                    if ((await settleBefore(req, opTimeoutMs)) === 'ok') {
+                        try { wakeLock = await req; } catch (e) { wakeLock = null; }
+                        // Auto-release (tab hide) fires `release`: clear the
+                        // handle so the visible-return handler can re-acquire.
+                        if (wakeLock && wakeLock.addEventListener) {
+                            const held = wakeLock;
+                            held.addEventListener('release', () => { if (wakeLock === held) wakeLock = null; });
+                        }
+                    } else {
+                        lifeEvent('wakelock', 'request timed out — continuing without it');
                     }
                 }
             } catch (e) { /* unsupported — user must keep the screen awake */ }
@@ -993,12 +1021,15 @@
 
     // Invalidate the in-progress frame without touching session history:
     // the samples from an interruption are holes, not data, so the next
-    // attempt must re-lock on fresh sync.
+    // attempt must re-lock on fresh sync. Sync tracking resets even in
+    // LISTENING: otherwise unobserved gap time counts toward the 800 ms
+    // preamble and the next drop can lock a sweep on a stale run.
     function invalidateFrame(why) {
-        if (state === S.IDLE || state === S.LISTENING) return;
-        state = S.LISTENING;
+        if (state === S.IDLE) return;
         syncRunStart = -1;
         lastSyncTs = -1;
+        if (state === S.LISTENING) return;
+        state = S.LISTENING;
         slots = [];
         log('err', '  ' + why + ' — frame invalidated, waiting for fresh sync');
     }
@@ -1015,6 +1046,10 @@
     function recoverCapture(note) {
         if (!captureInterrupted) return;
         captureInterrupted = null;
+        // Fresh sync required: no run from before (or during) the hole
+        // may complete afterwards.
+        syncRunStart = -1;
+        lastSyncTs = -1;
         log('ok', '  ' + note + ' — resuming, waiting for fresh sync');
         setStatus('Listening — waiting for sync tone…');
         lifeEvent('recover', note);
@@ -1098,6 +1133,15 @@
             invalidateFrame('loop gap ' + Math.round(ts - lastTickTs) + ' ms');
         }
         lastTickTs = ts;
+
+        // While capture is interrupted the analyser holds frozen/stale
+        // data: decode nothing (not even the floor — silence would drag
+        // it down and every later frame would read as loud). The loop
+        // stays armed so recovery resumes on the next frame.
+        if (captureInterrupted) {
+            requestAnimationFrame(tick);
+            return;
+        }
 
         analyser.getFloatFrequencyData(freqData);
         // Clip scan (NS-28): peak-hold the hottest time-domain sample.
@@ -1840,7 +1884,7 @@
     async function startSelfTest() {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         watchCtx(audioCtx);
-        try { if (audioCtx.state !== 'running') await audioCtx.resume(); } catch (e) {}
+        await resumeBounded(audioCtx);
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = C.fftSize;
         analyser.smoothingTimeConstant = C.smoothing;
@@ -2320,9 +2364,7 @@
             + (secure ? ' · secure context' : ' · INSECURE — mic will fail'));
         try {
             AC = new (window.AudioContext || window.webkitAudioContext)();
-            if (AC.state === 'suspended') {
-                try { await AC.resume(); } catch (e) { /* stays suspended */ }
-            }
+            await resumeBounded(AC);
             const lat = AC.outputLatency ?? AC.baseLatency;
             push('audio', AC.state === 'running',
                 AC.sampleRate + ' Hz · ' + AC.state
@@ -2332,8 +2374,14 @@
             push('audio', false, 'AudioContext failed: ' + (e && e.message ? e.message : e));
         }
         try {
-            const devs = await navigator.mediaDevices.enumerateDevices();
-            knownMics = devs.filter((d) => d.kind === 'audioinput').length;
+            const req = navigator.mediaDevices.enumerateDevices();
+            if ((await settleBefore(req, opTimeoutMs)) === 'ok') {
+                const devs = await req;
+                knownMics = devs.filter((d) => d.kind === 'audioinput').length;
+            } else {
+                knownMics = -1;
+                lifeEvent('checks', 'device enumeration timed out');
+            }
         } catch (e) { knownMics = -1; }
         lifeEvent('checks', 'probe starting');
         let stream = null;
@@ -2356,9 +2404,7 @@
             micFailed = null;
             micFailedDetail = null;
             const actx = AC || new (window.AudioContext || window.webkitAudioContext)();
-            if (actx.state !== 'running') {
-                try { await actx.resume(); } catch (e) { /* stays suspended */ }
-            }
+            await resumeBounded(actx);
             // No running clock, no samples: a suspended context feeds the
             // analyser silence, which would read as a dead mic + quiet room.
             if (actx.state !== 'running') {
@@ -2568,6 +2614,7 @@
             selfTest: () => playSelfTest(false), play: () => playMessage(),
             runChecks, devices: refreshMicList,
             setTryMsg: (v) => { tryMsg.value = v; },
+            setOpTimeout: (ms) => { opTimeoutMs = ms; },
             session: sessionSnapshot } };
 
     // Init

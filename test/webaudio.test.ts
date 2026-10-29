@@ -71,6 +71,7 @@ interface LifecycleTestApi {
   runChecks(): Promise<void>;
   devices(): Promise<void>;
   setTryMsg(v: string): void;
+  setOpTimeout(ms: number): void;
   session(): SessionSnapshot;
 }
 
@@ -137,6 +138,7 @@ interface PageScript {
   ctxFailCtor?: boolean;
   ctxStartSuspended?: boolean;
   ctxResumeStuck?: boolean;
+  ctxResumeHangs?: boolean;
   wakeLock?: boolean;
 }
 
@@ -229,6 +231,7 @@ interface LoadedPage {
   docStub: Record<string, unknown>;
   wakeRequests: number;
   sentinels: AnyRecord[];
+  ticks: Array<(ts: number) => void>;
   setDevices(devs: DeviceDesc[]): void;
   fireDeviceChange(): void;
 }
@@ -236,12 +239,37 @@ interface LoadedPage {
 // biome-ignore lint/suspicious/noExplicitAny: stub file; fakes cross the untyped page boundary.
 type AnyRecord = Record<string, any>;
 
+type AnalyserMode = "quiet" | "sync";
+
+class FakeAnalyser {
+  mode: AnalyserMode = "quiet";
+  fftSize = 4096;
+  frequencyBinCount = 2048;
+  smoothingTimeConstant = 0;
+  getFloatFrequencyData(buf: Float32Array): void {
+    if (this.mode === "quiet") {
+      buf.fill(-80);
+      return;
+    }
+    // Loud sync band for tick-driven tests: binHz = 48000/4096, so
+    // 3900–4100 Hz lands on bins 332..350.
+    buf.fill(-90);
+    for (let i = 325; i <= 355 && i < buf.length; i++) buf[i] = -20;
+  }
+  getFloatTimeDomainData(buf: Float32Array): void {
+    buf.fill(0);
+  }
+  connect(): void {}
+  disconnect(): void {}
+}
+
 class FakeCtx {
   sampleRate = 48000;
   state = "running";
   resumeCalls = 0;
   closed = false;
   gainCount = 0;
+  analysers: FakeAnalyser[] = [];
   listeners: Record<string, Array<() => void>> = {};
   private clock = 0;
   constructor(private script: PageScript) {
@@ -257,7 +285,8 @@ class FakeCtx {
   }
   async resume(): Promise<void> {
     this.resumeCalls++;
-    if (!this.script.ctxResumeStuck) this.state = "running";
+    if (this.script.ctxResumeHangs) await new Promise<void>(() => {});
+    else if (!this.script.ctxResumeStuck) this.state = "running";
   }
   async close(): Promise<void> {
     this.closed = true;
@@ -266,20 +295,10 @@ class FakeCtx {
   createMediaStreamSource(_s: unknown): { connect(): void; disconnect(): void } {
     return { connect() {}, disconnect() {} };
   }
-  createAnalyser(): AnyRecord {
-    return {
-      fftSize: 4096,
-      frequencyBinCount: 2048,
-      smoothingTimeConstant: 0,
-      getFloatFrequencyData(buf: Float32Array) {
-        buf.fill(-80);
-      },
-      getFloatTimeDomainData(buf: Float32Array) {
-        buf.fill(0);
-      },
-      connect() {},
-      disconnect() {},
-    };
+  createAnalyser(): FakeAnalyser {
+    const an = new FakeAnalyser();
+    this.analysers.push(an);
+    return an;
   }
   createGain(): AnyRecord {
     this.gainCount++;
@@ -363,7 +382,13 @@ function loadPage(script: PageScript = {}): LoadedPage {
     };
   }
   (globalThis as AnyRecord).navigator = nav;
-  (globalThis as AnyRecord).requestAnimationFrame = (_cb: unknown): number => 1; // capture only; tick never runs
+  // Capture rAF callbacks without running them: tick-driven tests invoke
+  // the real loop by hand with scripted timestamps.
+  const ticks: Array<(ts: number) => void> = [];
+  (globalThis as AnyRecord).requestAnimationFrame = (cb: (ts: number) => void): number => {
+    ticks.push(cb);
+    return ticks.length;
+  };
   (globalThis as AnyRecord).location = { protocol: "https:", host: "test", href: "https://test/" };
 
   const Ctx = class extends FakeCtx {
@@ -440,6 +465,7 @@ function loadPage(script: PageScript = {}): LoadedPage {
       return wakeRequests;
     },
     sentinels,
+    ticks,
     setDevices: (devs: DeviceDesc[]) => {
       devices = devs;
     },
@@ -695,6 +721,97 @@ test("pre-permission picker is honest; enumeration failure never blocks capture"
   await t2.api.start(); // capture proceeds without a device list
   expect(t2.api.session().state).toBe("listening");
   t2.api.stop();
+});
+
+test("loop gap clears the preamble run (no lock on stale sync)", async () => {
+  const t = loadPage();
+  await t.api.start();
+  const tick = t.ticks[0];
+  expect(tick).toBeDefined();
+  const an = t.ctxInstances[0]?.analysers[0];
+  expect(an).toBeDefined();
+  if (an) an.mode = "sync";
+  let ts = 10000;
+  for (let i = 0; i < 60; i++) {
+    ts += 1000 / 60;
+    tick?.(ts); // ~1 s of observed sync through the real loop
+  }
+  ts += 500;
+  tick?.(ts); // the hole: counted and invalidated, run cleared
+  expect(t.api.report()).toContain("dropouts 1");
+  const thresh = -55 + 12;
+  t.api.feed(ts + 16, false, 2000, thresh + 25, thresh, thresh - 20, thresh + 25);
+  expect(t.api.session().state).toBe("listening"); // pre-gap sync cannot lock
+  t.api.stop();
+});
+
+test("muted ticks decode nothing; recovery needs fresh sync", async () => {
+  const t = loadPage();
+  await t.api.start();
+  const tick = t.ticks[0];
+  expect(tick).toBeDefined();
+  const track = t.streams[0]?.tracks[0];
+  expect(track).toBeDefined();
+  track?.onmute?.();
+  const an = t.ctxInstances[0]?.analysers[0];
+  if (an) an.mode = "sync"; // frozen loud data, as a suspended clock leaves it
+  let ts = 20000;
+  for (let i = 0; i < 70; i++) {
+    ts += 1000 / 60;
+    tick?.(ts);
+  }
+  expect(t.api.session().state).toBe("listening");
+  expect(t.api.report()).toContain("no frames yet");
+  const thresh = -55 + 12;
+  t.api.feed(ts + 16, false, 2000, thresh + 25, thresh, thresh - 20, thresh + 25);
+  expect(t.api.session().state).toBe("listening"); // no run survived the hole
+  track?.onunmute?.();
+  for (let s = 0; s <= 900; s += 50) {
+    t.api.feed(ts + 100 + s, true, 2500, thresh - 20, thresh, thresh + 25, thresh - 20);
+  }
+  t.api.feed(ts + 1100, false, 2000, thresh + 25, thresh, thresh - 20, thresh + 25);
+  expect(t.api.session().state).toBe("sweep"); // fresh post-recovery sync locks
+  t.api.stop();
+});
+
+test("interruption and recovery both clear sync tracking", async () => {
+  const t = loadPage();
+  await t.api.start();
+  const thresh = -55 + 12;
+  for (let s = 0; s <= 600; s += 50) {
+    t.api.feed(s, true, 2500, thresh - 20, thresh, thresh + 25, thresh - 20);
+  }
+  const track = t.streams[0]?.tracks[0];
+  track?.onmute?.(); // clears the 600 ms pre-hole run
+  // feed() bypasses the tick skip by design: samples arriving mid-hole
+  // must still not complete afterwards, so recovery resets again.
+  for (let s = 700; s <= 1600; s += 50) {
+    t.api.feed(s, true, 2500, thresh - 20, thresh, thresh + 25, thresh - 20);
+  }
+  track?.onunmute?.();
+  t.api.feed(1700, false, 2000, thresh + 25, thresh, thresh - 20, thresh + 25);
+  expect(t.api.session().state).toBe("listening");
+  t.api.stop();
+});
+
+test("hung resume cannot wedge startup, playback, or checks", async () => {
+  const t = loadPage({ ctxStartSuspended: true, ctxResumeHangs: true });
+  t.api.setOpTimeout(50);
+  await t.api.start();
+  const s = t.api.session();
+  expect(s.state).toBe("idle");
+  expect(s.inflight).toBe(0);
+  expect(s.micFailed).toBe("AudioSuspended");
+  expect(s.startLabel).toBe("Start Listening");
+  expect(s.micDisabled).toBe(false);
+  expect(await t.api.selfTest()).toBe(false);
+  expect(t.api.session().synthPlaying).toBe(false);
+  await t.api.runChecks();
+  const rows = t.api.checks().results;
+  expect(rows.length).toBe(7);
+  expect(rows.find((r) => r.name === "audio")?.ok).toBe(false);
+  expect(rows.find((r) => r.name === "mic")?.blocked).toBe(true);
+  expect(t.api.session().checksRunning).toBe(false);
 });
 
 test("wake-lock auto-release clears the handle so return re-acquires", async () => {

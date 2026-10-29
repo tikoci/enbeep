@@ -216,6 +216,18 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   the other 16 pass), `bun test` 88 pass + 1 skip, tsc/lint clean,
   browser A/B/C1/C2/F/E/D green. The stub-button fix this round also
   made two earlier tests exercise their real paths.
+- 2026-10-29 — NS-31 review follow-ups, round 3 (Macroscope, PR #4):
+  late wake-lock grants after the request timeout are released instead
+  of leaking past Stop; startup rechecks context/track health after
+  the wake-lock yield (suspension/mute/ended in that window
+  interrupts instead of presenting healthy capture); a page tap
+  resumes a suspended live session, making the interruption message
+  true. Evidence: 3 new `test/webaudio.test.ts` regressions (23 in
+  file; all 3 fail on the pre-fix page while the other 20 pass), `bun
+  test` 91 pass + 1 skip, tsc/lint clean, browser A/B/C1/C2/F/E/D
+  green. Note: CodeRabbit auto incremental reviews are disabled on
+  this repo, so it only reviewed the first push — re-review needs a
+  manual `@coderabbitai review` trigger.
 - 2026-10-28 — NS-1 Publish and prove the public surfaces: created
   tikoci/enbeep (public), pushed `main` only at `add372c` (backup +
   `t3/*` refs stayed local), LFS 39/39 objects. First cycle green:

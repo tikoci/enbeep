@@ -141,6 +141,7 @@ interface PageScript {
   ctxResumeHangs?: boolean;
   failGraph?: boolean;
   wakeLock?: boolean;
+  wakeLockHold?: boolean;
 }
 
 function deferred<T>(): {
@@ -232,6 +233,7 @@ interface LoadedPage {
   docStub: Record<string, unknown>;
   wakeRequests: number;
   sentinels: AnyRecord[];
+  releaseWakeLock(): void;
   ticks: Array<(ts: number) => void>;
   setDevices(devs: DeviceDesc[]): void;
   fireDeviceChange(): void;
@@ -286,8 +288,14 @@ class FakeCtx {
   }
   async resume(): Promise<void> {
     this.resumeCalls++;
-    if (this.script.ctxResumeHangs) await new Promise<void>(() => {});
-    else if (!this.script.ctxResumeStuck) this.state = "running";
+    if (this.script.ctxResumeHangs) {
+      await new Promise<void>(() => {});
+    } else if (!this.script.ctxResumeStuck && this.state !== "running") {
+      // Real contexts fire statechange on the transition; the page's
+      // watch/recover path depends on that event.
+      this.state = "running";
+      for (const f of this.listeners.statechange ?? []) f();
+    }
   }
   async close(): Promise<void> {
     this.closed = true;
@@ -337,6 +345,7 @@ function loadPage(script: PageScript = {}): LoadedPage {
   const docListeners: Record<string, Array<(...a: unknown[]) => void>> = {};
   const sentinels: AnyRecord[] = [];
   let wakeRequests = 0;
+  let wakeGate: { promise: Promise<void>; resolve: () => void } | null = null;
 
   const mediaDevices = {
     enumerateDevices: async (): Promise<DeviceDesc[]> => {
@@ -363,7 +372,12 @@ function loadPage(script: PageScript = {}): LoadedPage {
     nav.wakeLock = {
       request: async (_kind: string): Promise<AnyRecord> => {
         wakeRequests++;
+        if (script.wakeLockHold) {
+          if (!wakeGate) wakeGate = deferred<void>();
+          await wakeGate.promise;
+        }
         const listeners: Record<string, Array<() => void>> = {};
+        let releases = 0;
         const sentinel: AnyRecord = {
           released: false,
           addEventListener: (t: string, f: () => void): void => {
@@ -372,11 +386,13 @@ function loadPage(script: PageScript = {}): LoadedPage {
             listeners[t] = list;
           },
           release: async (): Promise<void> => {
+            releases++;
             for (const f of listeners.release ?? []) f();
           },
           __fireRelease: (): void => {
             for (const f of listeners.release ?? []) f();
           },
+          __releases: (): number => releases,
         };
         sentinels.push(sentinel);
         return sentinel;
@@ -473,6 +489,7 @@ function loadPage(script: PageScript = {}): LoadedPage {
       return wakeRequests;
     },
     sentinels,
+    releaseWakeLock: () => wakeGate?.resolve(),
     ticks,
     setDevices: (devs: DeviceDesc[]) => {
       devices = devs;
@@ -874,6 +891,47 @@ test("Stop mid-play reports incomplete playback, controls restored", async () =>
   expect(s.synthPlaying).toBe(false);
   expect(s.state).toBe("idle");
   expect(s.selfDisabled).toBe(false);
+});
+
+test("suspension during startup interrupts instead of presenting healthy", async () => {
+  const t = loadPage({ wakeLock: true, wakeLockHold: true });
+  const p = t.api.start();
+  for (let i = 0; i < 200 && t.wakeRequests === 0; i++) await Bun.sleep(5);
+  expect(t.wakeRequests).toBe(1); // startup parked at the wake-lock await
+  t.ctxInstances[0]?.fireState("suspended"); // watchCtx ignores it: still IDLE
+  expect(t.api.session().interrupted).toBeNull();
+  t.releaseWakeLock();
+  await p;
+  const s = t.api.session();
+  expect(s.state).toBe("listening");
+  expect(s.interrupted).toContain("suspended"); // the recheck caught it
+  t.api.stop();
+});
+
+test("late wake-lock grant after timeout is released, not leaked", async () => {
+  const t = loadPage({ wakeLock: true, wakeLockHold: true });
+  t.api.setOpTimeout(50);
+  await t.api.start(); // proceeds without the lock after the timeout
+  expect(t.api.session().state).toBe("listening");
+  expect(t.sentinels.length).toBe(0);
+  t.releaseWakeLock();
+  await Bun.sleep(20);
+  expect(t.sentinels.length).toBe(1);
+  expect(t.sentinels[0]?.__releases()).toBe(1);
+  t.api.stop();
+});
+
+test("tap resumes a suspended session", async () => {
+  const t = loadPage();
+  await t.api.start();
+  const ctx = t.ctxInstances[0];
+  ctx?.fireState("suspended");
+  expect(t.api.session().interrupted).toContain("suspended");
+  for (const f of t.docListeners.pointerdown ?? []) f();
+  expect(ctx?.resumeCalls).toBe(1);
+  expect(t.api.session().interrupted).toBeNull();
+  expect(t.api.session().status).toBe("Listening — waiting for sync tone…");
+  t.api.stop();
 });
 
 test("wake-lock auto-release clears the handle so return re-acquires", async () => {

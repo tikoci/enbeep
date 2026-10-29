@@ -967,6 +967,9 @@
                             held.addEventListener('release', () => { if (wakeLock === held) wakeLock = null; });
                         }
                     } else {
+                        // Late grant after the timeout: release it — this
+                        // sentinel never reaches wakeLock, so Stop cannot.
+                        req.then((lock) => { lock.release().catch(() => {}); }, () => {});
                         lifeEvent('wakelock', 'request timed out — continuing without it');
                     }
                 }
@@ -982,6 +985,16 @@
             sessionIsSynth = false;
             setupCanvas();
             updateUI();
+            // Health recheck: the wake-lock await yielded while watchCtx
+            // ignores IDLE state changes, so a suspension/mute/ended in
+            // that window would otherwise present as healthy capture.
+            if (audioCtx.state !== 'running') {
+                interruptCapture('Audio ' + audioCtx.state + ' — tap the page to resume');
+            } else if (track.readyState !== 'live') {
+                micDead('Mic track ended — tap Stop, then Start');
+            } else if (track.muted) {
+                interruptCapture('Mic muted by OS — unmute to resume, or tap Stop, then Start');
+            }
             lifeEvent('start', 'active (' + (appliedLabel || 'default input') + ')');
             refreshMicList(); // labels now available
             requestAnimationFrame(tick);
@@ -2662,6 +2675,17 @@
             refreshMicList();
         });
     }
+    // A tap anywhere resumes a suspended live session: the interruption
+    // status promises exactly this, and the Start button means Stop while
+    // a session is active. Gesture-driven, so autoplay-compliant; the
+    // statechange handler plus the recovery gate decide whether capture
+    // actually resumes.
+    document.addEventListener('pointerdown', () => {
+        if (captureInterrupted && audioCtx
+            && (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted')) {
+            audioCtx.resume().catch(() => {});
+        }
+    });
     window.addEventListener('load', () => { setupCanvas(); refreshMicList(); });
     window.addEventListener('resize', () => { if (state !== S.IDLE) setupCanvas(); });
     symSel.addEventListener('change', () => { symMs = Number(symSel.value) || 200; refreshTryMeta(); });

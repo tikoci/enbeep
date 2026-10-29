@@ -32,9 +32,10 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   GitHub-hosted proof remains part of NS-1.
 - Live decoder: desktop verified; iPhone has only passed the in-page
   Self-test, never an over-air frame (see `frames.jsonl` analysis in
-  docs/TESTING.md). Repo not yet published to GitHub; `main` holds the
-  LFS-migrated history (NS-20 done), unpushed, no remote configured.
-  Local backup ref `backup/pre-lfs-migrate` lives until the NS-1 push.
+  docs/TESTING.md). Repo published as tikoci/enbeep (NS-1 done
+  2026-10-28, public, `origin` configured); `main` holds the
+  LFS-migrated history. Local `backup/pre-lfs-migrate` deleted after
+  the push.
 - Try tab: `live.html` opens on Try it — RouterOS load/play panel
   (`$enbeepText`) + editable speaker sender with byte validation;
   11-byte payloads show their text reading; the diagnostics report keeps
@@ -51,11 +52,10 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
   (paste, API-load, `/import`, `[:parse]`, fetch one-liner E2E). 7.16
   `/import` re-test still needs hardware. Named parameters + defaults
   are the non-blocking NS-27 item.
-- Pages gating (NS-21 change landed, demo pending NS-1): Pages deploys
-  only on same-repo push CI success via `workflow_run`, pinned to the
-  validated SHA, with no manual dispatch bypass; actionlint clean.
-  First-publish cycle still has to show a failed revision skipping
-  deploy.
+- Pages gating (NS-21 landed, success path deployed via NS-1): Pages
+  deploys only on same-repo push CI success via `workflow_run`, pinned
+  to the validated SHA, with no manual dispatch bypass; actionlint
+  clean. A failed main revision skipping deploy is still unobserved.
 - Diagnostics (NS-28 done): Run checks probes room/clip/band + applied
   mic settings with BT steerage; reports carry the session acoustic
   block, a live-mirrored likely-cause hint, an optional sender note,
@@ -69,32 +69,15 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
 
 ## P0 — publish gate (top first; NS-1 last)
 
-- [ ] **NS-21 Gate Pages deployment on validation** · `blocked` by NS-1's
-  first GitHub CI/deploy cycle.
+- [ ] **NS-21 Gate Pages deployment on validation** · `blocked` by a
+  future failed main run (watch item).
   Workflow change landed 2026-10-28 (actionlint clean, revised after
   review): Pages triggers on CI completion via `workflow_run`, deploys
   only when the conclusion is `success` on a same-repo push event, and
   checks out the validated SHA. No `workflow_dispatch` (it would bypass
-  the gate; recovery is a CI re-run). Residual: demonstrate a failing
-  revision cannot deploy — needs the NS-1 remote (watch the first
-  publish cycle; a failed main run must skip deploy). Keep this as a
-  workflow change rather than claiming a local smoke test proves GitHub
-  deployment works.
-- [ ] **NS-1 Publish and prove the public surfaces** · `ready`
-  Commit the reviewed working tree first, including the new CHR test,
-  workflow and contribution docs; configure the chosen GitHub remote.
-  Push to GitHub (`git push -u origin main` — only `main`, never the
-  local `backup/*` or `refs/t3/*` refs); enable Actions + Pages. Done
-  when: CI is green on `main`, the Pages URL serves `/` (live decoder),
-  `/harness.html`, and `/enbeep.rsc` (fetch each, record the URL here).
-  After the push succeeds, delete the local `backup/pre-lfs-migrate`
-  ref (it pins the pre-migration objects).
-  No Git remote is configured in this checkout yet. During publication,
-  apply and verify the GitHub settings in
-  [CONTRIBUTING.md](CONTRIBUTING.md#github-setup-at-publication).
-  Also verify the supplementary CHR beep workflow and its downloadable
-  capture/diagnostic artifact on the first main push (`act` is rehearsal).
-  Feed verified demo/issue URLs into the public README pass (NS-24).
+  the gate; recovery is a CI re-run). Success path proven by the NS-1
+  publish cycle (CI success → Pages deployed the validated SHA).
+  Residual: observe a failed main revision skipping deploy.
 ## P0 — demo truth (claims we must not make unverified)
 
 - [ ] **NS-4 First over-air iPhone capture** · `needs-hardware`
@@ -184,6 +167,16 @@ Status values: `ready` · `blocked` (say by what) · `needs-hardware`.
 
 ## Done
 
+- 2026-10-28 — NS-1 Publish and prove the public surfaces: created
+  tikoci/enbeep (public), pushed `main` only at `add372c` (backup +
+  `t3/*` refs stayed local), LFS 39/39 objects. First cycle green:
+  CI (bun/python-legacy/browser), CHR beep + downloadable artifact,
+  Pages deployed the validated SHA via `workflow_run`. Verified
+  https://tikoci.dev/enbeep/ (live decoder), `/harness.html`,
+  `/enbeep.rsc` (all 200, byte sizes match). GitHub settings applied:
+  squash-only + PR-title + autodelete, `capture` label, Pages workflow
+  builds, `main` protection (PR, 3 strict checks, 0 approvals, admins
+  included). Backup ref deleted post-push. Demo URLs feed NS-24.
 - 2026-10-28 — Pre-publication CHR/code/docs review: isolated VM names
   (parallel KVM/TCG runs pass), original + replacement patch-byte
   checks, explicit WAV format + shared WAV reader, API failure no

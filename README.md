@@ -186,3 +186,7 @@ encoder aligned. Use ignored `.scratch/` for work worth retaining locally
 between sessions; it is not part of a clone or a published test result.
 
 License: [MIT](LICENSE).
+
+---
+
+> Shipped as part of @Amm0Bot's entry into [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon), Oct 26, 2026 – Nov 4, 2026
